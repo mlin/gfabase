@@ -1,8 +1,12 @@
-use rusqlite::{params, Statement, Transaction};
+use clap::Clap;
+use genomicsqlite::ConnectionMethods;
+use log::{debug, error, info, warn};
+use rusqlite::{OpenFlags, Transaction, Statement, params, NO_PARAMS};
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, BufRead, BufReader};
+use std::path::Path;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -49,7 +53,7 @@ where
     fold_tsv_no_comments(|(), tsv| f(tsv), (), filename_or_stdin, comment)
 }
 
-pub fn insert_gfa1(filename_or_stdin: Option<&str>, txn: &Transaction, prefix: &str) -> Result<()> {
+fn insert_gfa1(filename_or_stdin: Option<&str>, txn: &Transaction, prefix: &str) -> Result<()> {
     // prepared statements
     let mut stmt_insert_segment = txn.prepare(&format!(
         "INSERT INTO {}gfa1_segment(_rowid_,name,tags_json,sequence_twobit) VALUES(?,?,?,nucleotides_twobit(?))",
@@ -75,7 +79,7 @@ pub fn insert_gfa1(filename_or_stdin: Option<&str>, txn: &Transaction, prefix: &
     iter_tsv_no_comments(dispatch, filename_or_stdin, Some('#' as u8))
 }
 
-pub fn insert_gfa1_segment(
+fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
     stmt: &mut Statement,
@@ -213,4 +217,87 @@ fn prepare_tags_json(tsv: &Vec<&str>, offset: usize) -> Result<json::object::Obj
         }
     }
     Ok(ans)
+}
+
+#[derive(Clap)]
+pub struct Opts {
+    /// destination gfab filename
+    pub gfab: String,
+    /// input GFA file (omit for standard input)
+    pub gfa: Option<String>,
+}
+
+pub fn main(opts: &Opts) -> Result<()> {
+    // formulate GenomicSQLite configuration JSON
+    let mut dbopts = json::object::Object::new();
+    dbopts.insert("unsafe_load", json::JsonValue::from(true));
+    dbopts.insert("inner_page_KiB", json::JsonValue::from(64));
+    dbopts.insert("outer_page_KiB", json::JsonValue::from(2));
+
+    // delete existing file, if any
+    {
+        let p = Path::new(&opts.gfab);
+        if p.is_file() {
+            warn!("delete existing file {}", p.to_str().unwrap());
+            std::fs::remove_file(p)?
+        }
+    }
+    // create db
+    let mut db = genomicsqlite::open(
+        &opts.gfab,
+        OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_READ_WRITE,
+        &dbopts,
+    )?;
+
+    // open transaction & apply schema
+    let txn = db.transaction()?;
+    let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
+    gfa_sql = simple_replace_all(&gfa_sql, "prefix", "");
+    txn.execute_batch(&*gfa_sql)?;
+    info!("created GFA1 schema in {}", &opts.gfab);
+
+    // intake GFA records
+    info!("inserting GFA1 records...");
+    insert_gfa1(opts.gfa.as_deref(), &txn, "")?;
+    info!("insertions complete; indexing...");
+
+    // create indexes
+    for index_spec in include_str!("schema/GFA1.index.sql").split("\n") {
+        let mut index_sql = index_spec.trim().to_string();
+        if index_sql.len() > 0 {
+            index_sql = simple_replace_all(&index_sql, "prefix", "");
+            info!("{} ...", index_sql.splitn(2, " ON ").next().unwrap());
+            txn.execute_batch(&index_sql)?;
+        }
+    }
+
+    // report stats
+    info!("tables & row counts:");
+    {
+        let mut stmt_tables = txn.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+        let mut tables = stmt_tables.query(NO_PARAMS)?;
+        while let Some(row) = tables.next()? {
+            let table: String = row.get(0)?;
+            let ct: i64 = txn.query_row(
+                &format!("SELECT count(1) FROM {}", table),
+                NO_PARAMS,
+                |ctr| ctr.get(0),
+            )?;
+            info!("\t{}\t{}", table, ct);
+        }
+    }
+
+    // done
+    info!("COMMIT");
+    txn.commit()?;
+    info!("\t🗹");
+    Ok(())
+}
+
+fn simple_replace_all(template: &str, key: &str, val: &str) -> String {
+    let pat = r"\{\{\s*".to_string() + key + r"\s*\}\}";
+    regex::Regex::new(&pat)
+        .unwrap()
+        .replace_all(template, val)
+        .to_string()
 }
