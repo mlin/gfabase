@@ -12,3 +12,5 @@ json = "^0"
 log = "^0.4"
 fern = { version = "^0.5", features = ["colored"] }
 regex = "^1.1"
+anyhow = "^1.0"
+thiserror = "^1.0"

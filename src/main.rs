@@ -1,9 +1,11 @@
+use anyhow::Result;
 use clap::Clap;
-extern crate log;
 extern crate fern;
+extern crate log;
 use fern::colors::{Color, ColoredLevelConfig};
 
 mod load;
+mod util;
 
 #[derive(Clap)]
 struct Opts {
@@ -16,7 +18,7 @@ enum SubCommand {
     Load(load::Opts),
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<()> {
     let t0 = std::time::Instant::now();
     let colors = ColoredLevelConfig::new()
         .debug(Color::Blue)
