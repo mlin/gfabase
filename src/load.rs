@@ -15,9 +15,15 @@ pub struct Opts {
     pub gfab: String,
     /// input GFA file (omit for standard input)
     pub gfa: Option<String>,
+
+    /// add genomic range index from rGFA input
+    #[clap(long)]
+    pub rgfa: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
+    let prefix = "";
+
     // formulate GenomicSQLite configuration JSON
     let mut dbopts = json::object::Object::new();
     dbopts.insert("unsafe_load", json::JsonValue::from(true));
@@ -42,23 +48,41 @@ pub fn main(opts: &Opts) -> Result<()> {
     // open transaction & apply schema
     let txn = db.transaction()?;
     let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
-    gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", "");
-    txn.execute_batch(&*gfa_sql)?;
+    gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
+    txn.execute_batch(&gfa_sql)?;
     info!("created GFA1 schema in {}", &opts.gfab);
 
+    if opts.rgfa {
+        let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
+        rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
+        txn.execute_batch(&rgfa_sql)?;
+        info!("created rGFA schema too");
+    }
+
     // intake GFA records
-    info!("inserting GFA1 records...");
-    insert_gfa1(opts.gfa.as_ref().unwrap_or(&String::from("")), &txn, "")?;
+    info!("processing GFA1 records...");
+    insert_gfa1(
+        opts.gfa.as_ref().unwrap_or(&String::from("")),
+        &txn,
+        prefix,
+        opts.rgfa,
+    )?;
     info!("insertions complete; indexing...");
 
     // create indexes
-    for index_spec in include_str!("schema/GFA1.index.sql").split("\n") {
-        let mut index_sql = index_spec.trim().to_string();
-        if index_sql.len() > 0 {
-            index_sql = util::simple_replace_all(&index_sql, "prefix", "");
-            info!("{} ...", index_sql.splitn(2, " ON ").next().unwrap());
-            txn.execute_batch(&index_sql)?;
-        }
+    create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &txn)?;
+
+    if opts.rgfa {
+        create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &txn)?;
+
+        let gri_sql = txn.create_genomic_range_index_sql(
+            &format!("{}gfa1_reference", prefix),
+            "rid",
+            "position",
+            "position+length",
+        )?;
+        info!("\tGenomic Range Indexing ...");
+        txn.execute_batch(&gri_sql)?;
     }
 
     // report stats
@@ -78,13 +102,25 @@ pub fn main(opts: &Opts) -> Result<()> {
     }
 
     // done
-    info!("COMMIT");
+    info!("flushing {}", &opts.gfab);
     txn.commit()?;
     info!("\t🗹");
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
+fn create_indexes(sql: &str, prefix: &str, txn: &Transaction) -> Result<()> {
+    for index_spec in sql.split(";") {
+        let mut index_sql = index_spec.trim().to_string();
+        if !index_sql.is_empty() {
+            index_sql = util::simple_replace_all(&index_sql, "prefix", prefix);
+            info!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
+            txn.execute_batch(&index_sql)?;
+        }
+    }
+    Ok(())
+}
+
+fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> Result<()> {
     // prepared statements
     let mut stmt_insert_segment = txn.prepare(&format!(
         "INSERT INTO {}gfa1_segment(_rowid_,name,tags_json,sequence_twobit) VALUES(?,?,?,nucleotides_twobit(?))",
@@ -94,15 +130,28 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
         "INSERT INTO {}gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)",
         prefix
     ))?;
+    let mut stmt_insert_rgfa = None;
+    if rgfa {
+        stmt_insert_rgfa = Some(txn.prepare(&format!(
+            "INSERT INTO {}gfa1_reference(segment,rid,position,length,rank) VALUES(?,?,?,?,?)",
+            prefix
+        ))?)
+    }
 
     let mut segments_by_name = HashMap::new();
 
     // closure to process one record
     let dispatch = |tsv: &Vec<&str>| -> Result<()> {
         match tsv[0] {
-            "S" => insert_gfa1_segment(tsv, txn, &mut stmt_insert_segment, &mut segments_by_name),
+            "S" => insert_gfa1_segment(
+                tsv,
+                txn,
+                &mut stmt_insert_segment,
+                stmt_insert_rgfa.as_mut(),
+                &mut segments_by_name,
+            ),
             "L" => insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name),
-            _ => Ok(()),
+            _ => invalid_gfa!("GFA record type {} not yet supported", tsv[0]),
         }
     };
 
@@ -114,6 +163,7 @@ fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
     stmt: &mut Statement,
+    maybe_stmt_rgfa: Option<&mut Statement>,
     segments_by_name: &mut HashMap<String, i64>,
 ) -> Result<()> {
     assert_eq!(tsv[0], "S");
@@ -124,12 +174,41 @@ fn insert_gfa1_segment(
     let rowid = name_to_rowid(tsv[1]);
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
     let sequence = if tsv.len() > 2 { Some(tsv[2]) } else { None };
-    let tags_json = prepare_tags_json(tsv, 3)?;
+    let mut tags_json = prepare_tags_json(tsv, 3)?;
+
+    let rgfa_tags = if maybe_stmt_rgfa.is_some() {
+        let sn = tags_json
+            .remove("SN:Z")
+            .map(|j| String::from(j.as_str().unwrap()));
+        let so = tags_json.remove("SO:i").map(|j| j.as_i64().unwrap());
+        let sr = tags_json.remove("SR:i").map(|j| j.as_i64().unwrap());
+        if sn.is_none() || so.is_none() || sr.is_none() {
+            invalid_gfa!(
+                "segment missing required rGFA tags (SN:Z SO:i SR:i): {}",
+                tsv[1]
+            )
+        }
+        Some((sn.unwrap(), so.unwrap(), sr.unwrap()))
+    } else {
+        None
+    };
+
     let tags_json_text = tags_json.dump();
     stmt.execute(params![rowid, name, tags_json_text, sequence])?;
 
     if let Some(nm) = name {
         segments_by_name.insert(String::from(nm), txn.last_insert_rowid());
+    };
+
+    if let Some(stmt_rgfa) = maybe_stmt_rgfa {
+        let (sn, so, sr) = rgfa_tags.unwrap();
+        stmt_rgfa.execute(params!(
+            txn.last_insert_rowid(),
+            sn,
+            so,
+            sequence.unwrap_or_default().len() as i64,
+            sr
+        ))?;
     };
 
     Ok(())
