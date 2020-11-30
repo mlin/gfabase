@@ -1,5 +1,6 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
+use json::JsonValue;
 use log::{debug, error, info, warn};
 use rusqlite::{params, OpenFlags, Statement, Transaction, NO_PARAMS};
 use std::collections::HashMap;
@@ -13,7 +14,7 @@ use crate::util::Result;
 pub struct Opts {
     /// destination gfab filename
     pub gfab: String,
-    /// input GFA file (omit for standard input)
+    /// input GFA file [stdin]
     pub gfa: Option<String>,
 
     /// add genomic range index from rGFA input
@@ -173,8 +174,25 @@ fn insert_gfa1_segment(
 
     let rowid = name_to_rowid(tsv[1]);
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
-    let sequence = if tsv.len() > 2 { Some(tsv[2]) } else { None };
+    let sequence = if tsv.len() > 2 && tsv[2] != "*" {
+        Some(tsv[2])
+    } else {
+        None
+    };
     let mut tags_json = prepare_tags_json(tsv, 3)?;
+
+    let ln_tag = tags_json.get("LN:i").map(|j| j.as_i64()).flatten();
+    let sequence_len = match (sequence, ln_tag) {
+        (Some(seq), Some(lni)) if lni != (seq.len() as i64) => {
+            invalid_gfa!(
+                "segment with inconsistent sequence length and LN tag: {}",
+                tsv[1]
+            )
+        }
+        (Some(seq), _) => seq.len() as i64,
+        (None, Some(lni)) => lni,
+        (None, None) => 0,
+    };
 
     let rgfa_tags = if maybe_stmt_rgfa.is_some() {
         let sn = tags_json
@@ -202,13 +220,7 @@ fn insert_gfa1_segment(
 
     if let Some(stmt_rgfa) = maybe_stmt_rgfa {
         let (sn, so, sr) = rgfa_tags.unwrap();
-        stmt_rgfa.execute(params!(
-            txn.last_insert_rowid(),
-            sn,
-            so,
-            sequence.unwrap_or_default().len() as i64,
-            sr
-        ))?;
+        stmt_rgfa.execute(params!(txn.last_insert_rowid(), sn, so, sequence_len, sr))?;
     };
 
     Ok(())

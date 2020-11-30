@@ -3,7 +3,7 @@ CREATE TABLE {{prefix}}gfa1_segment(
     _rowid_ INTEGER NOT NULL PRIMARY KEY,
     name TEXT,                             -- if distinct from _rowid_, otherwise NULL
     tags_json TEXT NOT NULL DEFAULT '{}',
-    sequence_twobit BLOB                   -- nucleotides_twobit() of the sequence text
+    sequence_twobit BLOB                   -- nucleotides_twobit() of the sequence text (or NULL)
 );
 
 -- Link

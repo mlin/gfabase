@@ -13,6 +13,13 @@ pub enum Error {
 
     #[error("[Invalid GFA input] {0}")]
     InvalidGfa(String),
+
+    #[error("[Invalid .gfab][table = {table:?}, rowid = {rowid:?}] {message:?}")]
+    InvalidGfab {
+        message: String,
+        table: String,
+        rowid: i64,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
