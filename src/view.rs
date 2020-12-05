@@ -72,7 +72,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             "SELECT
                 segment_id, coalesce(name, cast(segment_id AS TEXT)),
                 coalesce(tags_json, '{{}}'), sequence, rid, position, rank
-             FROM {}gfa1_segment LEFT NATURAL JOIN {}gfa1_reference",
+             FROM {}gfa1_segment LEFT JOIN {}gfa1_reference USING (segment_id)",
             prefix, prefix
         )
     };

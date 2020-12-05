@@ -2,7 +2,7 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use json::JsonValue;
 use log::{debug, error, info, warn};
-use rusqlite::{params, OpenFlags, Statement, Transaction, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -24,10 +24,6 @@ pub struct Opts {
     /// Zstandard compression level (-7 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
-
-    /// defragment to speed up graph traversal w/o sequences
-    #[clap(long)]
-    pub defrag: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -38,28 +34,12 @@ pub fn main(opts: &Opts) -> Result<()> {
     dbopts.insert("unsafe_load", json::JsonValue::from(true));
     dbopts.insert("inner_page_KiB", json::JsonValue::from(64));
     dbopts.insert("outer_page_KiB", json::JsonValue::from(2));
+    dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
 
     // create db
-    let mut maybe_tmpdir = None;
-    let initial_gfab = if opts.defrag {
-        // planning to defrag: initially write a temp db with fast compression
-        dbopts.insert(
-            "zstd_level",
-            json::JsonValue::from(std::cmp::min(opts.compress, -1)),
-        );
-        let tmpdir = tempfile::tempdir()?;
-        let gfab_basename = Path::new(&opts.gfab).file_name().unwrap();
-        let tmp_gfab = String::from(tmpdir.path().join(gfab_basename).to_str().unwrap());
-        maybe_tmpdir = Some(tmpdir);
-        tmp_gfab
-    } else {
-        // no defrag: write directly into final location
-        dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
-        delete_existing(&opts.gfab)?;
-        opts.gfab.clone()
-    };
+    delete_existing(&opts.gfab)?;
     let mut db = genomicsqlite::open(
-        &initial_gfab,
+        &opts.gfab,
         OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -72,7 +52,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
         gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
         txn.execute_batch(&gfa_sql)?;
-        info!("created GFA1 schema in {}", &initial_gfab);
+        info!("created GFA1 schema in {}", &opts.gfab);
 
         if opts.rgfa {
             let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
@@ -80,6 +60,11 @@ pub fn main(opts: &Opts) -> Result<()> {
             txn.execute_batch(&rgfa_sql)?;
             info!("added rGFA schema");
         }
+
+        // add a temp table to hold segment metadata, which we'll copy into the db after writing
+        // the segment sequences; this is write the metadata ~contiguously into the db file instead
+        // of interspersed among the (typically much larger) sequence data.
+        txn.execute_batch("CREATE TABLE temp.segment_meta_hold(segment_id INTEGER PRIMARY KEY, name TEXT, tags_json TEXT)")?;
 
         // intake GFA records
         info!("processing GFA1 records...");
@@ -89,47 +74,39 @@ pub fn main(opts: &Opts) -> Result<()> {
             prefix,
             opts.rgfa,
         )?;
-        info!("insertions complete; flushing {} ...", &initial_gfab);
+        info!("writing segment metadata...");
+        txn.execute_batch(&format!(
+            "INSERT INTO {}gfa1_segment_meta(segment_id, name, tags_json)
+             SELECT segment_id, name, tags_json FROM temp.segment_meta_hold",
+            prefix
+        ))?;
+        info!("insertions complete; indexing...");
+
+        // create indexes
+        info!("indexing:");
+        create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &txn)?;
+
+        if opts.rgfa {
+            create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &txn)?;
+
+            let gri_sql = txn.create_genomic_range_index_sql(
+                &format!("{}gfa1_reference", prefix),
+                "rid",
+                "position",
+                "position+length",
+            )?;
+            info!("\tGenomic Range Indexing ...");
+            txn.execute_batch(&gri_sql)?;
+        }
+
+        // done
+        info!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
 
-    if opts.defrag {
-        // vacuum temp db into the final location
-        delete_existing(&opts.gfab)?;
-        info!("defragmenting {} into {} ...", &initial_gfab, &opts.gfab);
-        dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
-        db.execute_batch(&db.genomicsqlite_vacuum_into_sql(&opts.gfab, &dbopts)?)?;
-        // delete temp db
-        db.close().map_err(|(_, e)| e)?;
-        maybe_tmpdir.unwrap().close()?;
-        // reopen defragmented db
-        db = genomicsqlite::open(
-            &opts.gfab,
-            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-            &dbopts,
-        )?;
-    }
-
-    // create indexes
-    info!("indexing:");
-    create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &db)?;
-
-    if opts.rgfa {
-        create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &db)?;
-
-        let gri_sql = db.create_genomic_range_index_sql(
-            &format!("{}gfa1_reference", prefix),
-            "rid",
-            "position",
-            "position+length",
-        )?;
-        info!("\tGenomic Range Indexing ...");
-        db.execute_batch(&gri_sql)?;
-    }
-
     // report stats
-    info!("tables & row counts:");
     {
+        info!("tables & row counts:");
         let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
         let mut tables = stmt_tables.query(NO_PARAMS)?;
         while let Some(row) = tables.next()? {
@@ -141,9 +118,19 @@ pub fn main(opts: &Opts) -> Result<()> {
             )?;
             info!("\t{}\t{}", table, ct);
         }
+        if let Some(e) = db
+            .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
+                Ok(util::Error::InvalidGfab {
+                    message: String::from("foreign key integrity violation"),
+                    table: row.get(0)?,
+                    rowid: row.get(1)?,
+                })
+            })
+            .optional()?
+        {
+            return Err(e);
+        }
     }
-
-    // done
     db.close().map_err(|(_, e)| e)?;
     info!("🗹 done");
     Ok(())
@@ -158,7 +145,7 @@ fn delete_existing(filename: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_indexes(sql: &str, prefix: &str, txn: &rusqlite::Connection) -> Result<()> {
+fn create_indexes(sql: &str, prefix: &str, txn: &Transaction) -> Result<()> {
     for index_spec in sql.split(";") {
         let mut index_sql = index_spec.trim().to_string();
         if !index_sql.is_empty() {
@@ -172,10 +159,8 @@ fn create_indexes(sql: &str, prefix: &str, txn: &rusqlite::Connection) -> Result
 
 fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> Result<()> {
     // prepared statements
-    let mut stmt_insert_segment_meta = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_segment_meta(segment_id,name,tags_json) VALUES(?,?,?)",
-        prefix
-    ))?;
+    let mut stmt_insert_segment_meta =
+        txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,tags_json) VALUES(?,?,?)")?;
     let mut stmt_insert_segment_sequence = txn.prepare(&format!(
         "INSERT INTO {}gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))",
         prefix
