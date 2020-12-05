@@ -20,6 +20,14 @@ pub struct Opts {
     /// add genomic range index from rGFA input
     #[clap(long)]
     pub rgfa: bool,
+
+    /// Zstandard compression level (-7 to 22)
+    #[clap(long, default_value = "6")]
+    pub compress: i8,
+
+    /// defragment to speed up graph traversal w/o sequences
+    #[clap(long)]
+    pub defrag: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -31,69 +39,102 @@ pub fn main(opts: &Opts) -> Result<()> {
     dbopts.insert("inner_page_KiB", json::JsonValue::from(64));
     dbopts.insert("outer_page_KiB", json::JsonValue::from(2));
 
-    // delete existing file, if any
-    {
-        let p = Path::new(&opts.gfab);
-        if p.is_file() {
-            warn!("delete existing file {}", p.to_str().unwrap());
-            std::fs::remove_file(p)?
-        }
-    }
     // create db
+    let mut maybe_tmpdir = None;
+    let initial_gfab = if opts.defrag {
+        // planning to defrag: initially write a temp db with fast compression
+        dbopts.insert(
+            "zstd_level",
+            json::JsonValue::from(std::cmp::min(opts.compress, -1)),
+        );
+        let tmpdir = tempfile::tempdir()?;
+        let gfab_basename = Path::new(&opts.gfab).file_name().unwrap();
+        let tmp_gfab = String::from(tmpdir.path().join(gfab_basename).to_str().unwrap());
+        maybe_tmpdir = Some(tmpdir);
+        tmp_gfab
+    } else {
+        // no defrag: write directly into final location
+        dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
+        delete_existing(&opts.gfab)?;
+        opts.gfab.clone()
+    };
     let mut db = genomicsqlite::open(
-        &opts.gfab,
-        OpenFlags::SQLITE_OPEN_CREATE | OpenFlags::SQLITE_OPEN_READ_WRITE,
+        &initial_gfab,
+        OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
     )?;
 
-    // open transaction & apply schema
-    let txn = db.transaction()?;
-    let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
-    gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
-    txn.execute_batch(&gfa_sql)?;
-    info!("created GFA1 schema in {}", &opts.gfab);
+    {
+        // open transaction & apply schema
+        let txn = db.transaction()?;
+        let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
+        gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
+        txn.execute_batch(&gfa_sql)?;
+        info!("created GFA1 schema in {}", &initial_gfab);
 
-    if opts.rgfa {
-        let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
-        rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
-        txn.execute_batch(&rgfa_sql)?;
-        info!("created rGFA schema too");
+        if opts.rgfa {
+            let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
+            rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
+            txn.execute_batch(&rgfa_sql)?;
+            info!("added rGFA schema");
+        }
+
+        // intake GFA records
+        info!("processing GFA1 records...");
+        insert_gfa1(
+            opts.gfa.as_ref().unwrap_or(&String::from("")),
+            &txn,
+            prefix,
+            opts.rgfa,
+        )?;
+        info!("insertions complete; flushing {} ...", &initial_gfab);
+        txn.commit()?;
     }
 
-    // intake GFA records
-    info!("processing GFA1 records...");
-    insert_gfa1(
-        opts.gfa.as_ref().unwrap_or(&String::from("")),
-        &txn,
-        prefix,
-        opts.rgfa,
-    )?;
-    info!("insertions complete; indexing...");
+    if opts.defrag {
+        // vacuum temp db into the final location
+        delete_existing(&opts.gfab)?;
+        info!("defragmenting {} into {} ...", &initial_gfab, &opts.gfab);
+        dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
+        db.execute_batch(&db.genomicsqlite_vacuum_into_sql(&opts.gfab, &dbopts)?)?;
+        // delete temp db
+        db.close().map_err(|(_, e)| e)?;
+        maybe_tmpdir.unwrap().close()?;
+        // reopen defragmented db
+        db = genomicsqlite::open(
+            &opts.gfab,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            &dbopts,
+        )?;
+    }
 
     // create indexes
-    create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &txn)?;
+    info!("indexing:");
+    create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &db)?;
 
     if opts.rgfa {
-        create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &txn)?;
+        create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &db)?;
 
-        let gri_sql = txn.create_genomic_range_index_sql(
+        let gri_sql = db.create_genomic_range_index_sql(
             &format!("{}gfa1_reference", prefix),
             "rid",
             "position",
             "position+length",
         )?;
         info!("\tGenomic Range Indexing ...");
-        txn.execute_batch(&gri_sql)?;
+        db.execute_batch(&gri_sql)?;
     }
 
     // report stats
     info!("tables & row counts:");
     {
-        let mut stmt_tables = txn.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+        let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
         let mut tables = stmt_tables.query(NO_PARAMS)?;
         while let Some(row) = tables.next()? {
             let table: String = row.get(0)?;
-            let ct: i64 = txn.query_row(
+            let ct: i64 = db.query_row(
                 &format!("SELECT count(1) FROM {}", table),
                 NO_PARAMS,
                 |ctr| ctr.get(0),
@@ -103,13 +144,21 @@ pub fn main(opts: &Opts) -> Result<()> {
     }
 
     // done
-    info!("flushing {}", &opts.gfab);
-    txn.commit()?;
-    info!("\t🗹");
+    db.close().map_err(|(_, e)| e)?;
+    info!("🗹 done");
     Ok(())
 }
 
-fn create_indexes(sql: &str, prefix: &str, txn: &Transaction) -> Result<()> {
+fn delete_existing(filename: &str) -> Result<()> {
+    let p = Path::new(filename);
+    if p.is_file() {
+        warn!("delete existing file {}", p.to_str().unwrap());
+        std::fs::remove_file(p)?
+    }
+    Ok(())
+}
+
+fn create_indexes(sql: &str, prefix: &str, txn: &rusqlite::Connection) -> Result<()> {
     for index_spec in sql.split(";") {
         let mut index_sql = index_spec.trim().to_string();
         if !index_sql.is_empty() {
@@ -123,8 +172,12 @@ fn create_indexes(sql: &str, prefix: &str, txn: &Transaction) -> Result<()> {
 
 fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> Result<()> {
     // prepared statements
-    let mut stmt_insert_segment = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_segment(_rowid_,name,tags_json,sequence_twobit) VALUES(?,?,?,nucleotides_twobit(?))",
+    let mut stmt_insert_segment_meta = txn.prepare(&format!(
+        "INSERT INTO {}gfa1_segment_meta(segment_id,name,tags_json) VALUES(?,?,?)",
+        prefix
+    ))?;
+    let mut stmt_insert_segment_sequence = txn.prepare(&format!(
+        "INSERT INTO {}gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))",
         prefix
     ))?;
     let mut stmt_insert_link = txn.prepare(&format!(
@@ -134,7 +187,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
     let mut stmt_insert_rgfa = None;
     if rgfa {
         stmt_insert_rgfa = Some(txn.prepare(&format!(
-            "INSERT INTO {}gfa1_reference(segment,rid,position,length,rank) VALUES(?,?,?,?,?)",
+            "INSERT INTO {}gfa1_reference(segment_id,rid,position,length,rank) VALUES(?,?,?,?,?)",
             prefix
         ))?)
     }
@@ -147,7 +200,8 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
             "S" => insert_gfa1_segment(
                 tsv,
                 txn,
-                &mut stmt_insert_segment,
+                &mut stmt_insert_segment_meta,
+                &mut stmt_insert_segment_sequence,
                 stmt_insert_rgfa.as_mut(),
                 &mut segments_by_name,
             ),
@@ -163,7 +217,8 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
 fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
-    stmt: &mut Statement,
+    stmt_meta: &mut Statement,
+    stmt_sequence: &mut Statement,
     maybe_stmt_rgfa: Option<&mut Statement>,
     segments_by_name: &mut HashMap<String, i64>,
 ) -> Result<()> {
@@ -174,7 +229,7 @@ fn insert_gfa1_segment(
 
     let rowid = name_to_rowid(tsv[1]);
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
-    let sequence = if tsv.len() > 2 && tsv[2] != "*" {
+    let maybe_sequence = if tsv.len() > 2 && tsv[2] != "*" {
         Some(tsv[2])
     } else {
         None
@@ -182,7 +237,7 @@ fn insert_gfa1_segment(
     let mut tags_json = prepare_tags_json(tsv, 3)?;
 
     let ln_tag = tags_json.get("LN:i").map(|j| j.as_i64()).flatten();
-    let sequence_len = match (sequence, ln_tag) {
+    let sequence_len = match (maybe_sequence, ln_tag) {
         (Some(seq), Some(lni)) if lni != (seq.len() as i64) => {
             invalid_gfa!(
                 "segment with inconsistent sequence length and LN tag: {}",
@@ -212,16 +267,19 @@ fn insert_gfa1_segment(
     };
 
     let tags_json_text = tags_json.dump();
-    stmt.execute(params![rowid, name, tags_json_text, sequence])?;
+    stmt_meta.execute(params![rowid, name, tags_json_text])?;
+    let rowid_actual = txn.last_insert_rowid();
 
     if let Some(nm) = name {
-        segments_by_name.insert(String::from(nm), txn.last_insert_rowid());
-    };
-
+        segments_by_name.insert(String::from(nm), rowid_actual);
+    }
+    if let Some(seq) = maybe_sequence {
+        stmt_sequence.execute(params![rowid_actual, seq])?;
+    }
     if let Some(stmt_rgfa) = maybe_stmt_rgfa {
         let (sn, so, sr) = rgfa_tags.unwrap();
-        stmt_rgfa.execute(params!(txn.last_insert_rowid(), sn, so, sequence_len, sr))?;
-    };
+        stmt_rgfa.execute(params!(rowid_actual, sn, so, sequence_len, sr))?;
+    }
 
     Ok(())
 }
@@ -251,7 +309,11 @@ fn insert_gfa1_link(
         to_segment,
         to_reverse,
         cigar,
-        tags_json_text
+        if tags_json_text.trim() != "{}" {
+            Some(tags_json_text)
+        } else {
+            None
+        }
     ])?;
     Ok(())
 }
@@ -304,7 +366,7 @@ fn prepare_tags_json(tsv: &Vec<&str>, offset: usize) -> Result<json::object::Obj
                     json::JsonValue::from(iv)
                 }
                 "f" => {
-                    let fv: f32 = fields[2].parse().or_else(|_| {
+                    let fv: f64 = fields[2].parse().or_else(|_| {
                         invalid_gfa!("malformed tag float: {}", tsv[cursor]);
                     })?;
                     json::JsonValue::from(fv)

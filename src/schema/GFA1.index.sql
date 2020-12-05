@@ -1,5 +1,5 @@
 CREATE UNIQUE INDEX {{prefix}}gfa1_segment_name ON
-    {{prefix}}gfa1_segment(name) WHERE name IS NOT NULL;
+    {{prefix}}gfa1_segment_meta(name) WHERE name IS NOT NULL;
 
 CREATE INDEX {{prefix}}gfa1_link_from_to ON
     {{prefix}}gfa1_link(from_segment,to_segment);
@@ -14,4 +14,4 @@ CREATE INDEX {{prefix}}gfa1_containment_contained_container ON
 CREATE UNIQUE INDEX {{prefix}}gfa1_path_name ON
     {{prefix}}gfa1_path(name) WHERE name IS NOT NULL;
 CREATE INDEX {{prefix}}gfa1_path_segment ON
-    {{prefix}}gfa1_path_element(segment);
+    {{prefix}}gfa1_path_element(segment_id);
