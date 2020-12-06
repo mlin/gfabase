@@ -1,10 +1,9 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
-use json::JsonValue;
+use json::object;
 use log::{debug, error, info, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::HashMap;
-use std::path::Path;
 
 use crate::invalid_gfa;
 use crate::util;
@@ -30,36 +29,12 @@ pub fn main(opts: &Opts) -> Result<()> {
     let prefix = "";
 
     // formulate GenomicSQLite configuration JSON
-    let mut dbopts = json::object::Object::new();
-    dbopts.insert("unsafe_load", json::JsonValue::from(true));
-    dbopts.insert("inner_page_KiB", json::JsonValue::from(64));
-    dbopts.insert("outer_page_KiB", json::JsonValue::from(2));
-    dbopts.insert("zstd_level", json::JsonValue::from(opts.compress));
-
-    // create db
-    delete_existing(&opts.gfab)?;
-    let mut db = genomicsqlite::open(
-        &opts.gfab,
-        OpenFlags::SQLITE_OPEN_CREATE
-            | OpenFlags::SQLITE_OPEN_READ_WRITE
-            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        &dbopts,
-    )?;
+    let mut db = new_db(&opts.gfab, opts.compress, 1024)?;
 
     {
         // open transaction & apply schema
         let txn = db.transaction()?;
-        let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
-        gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
-        txn.execute_batch(&gfa_sql)?;
-        info!("created GFA1 schema in {}", &opts.gfab);
-
-        if opts.rgfa {
-            let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
-            rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
-            txn.execute_batch(&rgfa_sql)?;
-            info!("added rGFA schema");
-        }
+        create_tables(&txn, prefix, opts.rgfa)?;
 
         // add a temp table to hold segment metadata, which we'll copy into the main db file after
         // writing all the segment sequences; this ensures the metadata is stored ~contiguously
@@ -80,78 +55,99 @@ pub fn main(opts: &Opts) -> Result<()> {
              SELECT segment_id, name, tags_json FROM temp.segment_meta_hold",
             prefix
         ))?;
-        info!("insertions complete; indexing...");
+        info!("insertions complete");
 
-        // create indexes
-        info!("indexing:");
-        create_indexes(&include_str!("schema/GFA1.index.sql"), prefix, &txn)?;
-
-        if opts.rgfa {
-            create_indexes(&include_str!("schema/rGFA1.index.sql"), prefix, &txn)?;
-
-            let gri_sql = txn.create_genomic_range_index_sql(
-                &format!("{}gfa1_reference", prefix),
-                "rid",
-                "position",
-                "position+length",
-            )?;
-            info!("\tGenomic Range Indexing ...");
-            txn.execute_batch(&gri_sql)?;
-        }
+        // indexing
+        create_indexes(&txn, prefix, opts.rgfa)?;
 
         // done
         info!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
 
-    // report stats
-    {
-        info!("tables & row counts:");
-        let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
-        let mut tables = stmt_tables.query(NO_PARAMS)?;
-        while let Some(row) = tables.next()? {
-            let table: String = row.get(0)?;
-            let ct: i64 = db.query_row(
-                &format!("SELECT count(1) FROM {}", table),
-                NO_PARAMS,
-                |ctr| ctr.get(0),
-            )?;
-            info!("\t{}\t{}", table, ct);
-        }
-        if let Some(e) = db
-            .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
-                Ok(util::Error::InvalidGfab {
-                    message: String::from("foreign key integrity violation"),
-                    table: row.get(0)?,
-                    rowid: row.get(1)?,
-                })
-            })
-            .optional()?
-        {
-            return Err(e);
-        }
-    }
+    summary(&db)?;
     db.close().map_err(|(_, e)| e)?;
     info!("🗹 done");
     Ok(())
 }
 
-fn delete_existing(filename: &str) -> Result<()> {
-    let p = Path::new(filename);
-    if p.is_file() {
-        warn!("delete existing file {}", p.to_str().unwrap());
-        std::fs::remove_file(p)?
+pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusqlite::Connection> {
+    // formulate GenomicSQLite configuration JSON
+    let dbopts = match object! {
+        unsafe_load: true,
+        inner_page_KiB: 64,
+        outer_page_KiB: 2,
+        zstd_level: compress,
+        page_cache_MiB: page_cache_MiB
+    } {
+        json::JsonValue::Object(o) => o,
+        _ => {
+            assert!(false);
+            json::object::Object::new()
+        }
+    };
+
+    // create db
+    util::delete_existing_file(filename)?;
+    let db = genomicsqlite::open(
+        filename,
+        OpenFlags::SQLITE_OPEN_CREATE
+            | OpenFlags::SQLITE_OPEN_READ_WRITE
+            | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        &dbopts,
+    )?;
+    db.execute_batch("PRAGMA foreign_keys = OFF")?;
+    Ok(db)
+}
+
+pub fn create_tables(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
+    let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
+    gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
+    db.execute_batch(&gfa_sql)?;
+
+    if rgfa {
+        let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
+        rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
+        db.execute_batch(&rgfa_sql)?;
+        info!("created [r]GFA1 tables");
+    } else {
+        info!("created GFA1 tables");
     }
+
     Ok(())
 }
 
-fn create_indexes(sql: &str, prefix: &str, txn: &Transaction) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
+    // create indexes
+    info!("indexing:");
+    create_indexes_exec(db, &include_str!("schema/GFA1.index.sql"), prefix)?;
+
+    if rgfa {
+        create_indexes_exec(db, &include_str!("schema/rGFA1.index.sql"), prefix)?;
+
+        let gri_sql = db.create_genomic_range_index_sql(
+            &format!("{}gfa1_reference", prefix),
+            "rid",
+            "position",
+            "position+length",
+        )?;
+        info!("\tGenomic Range Indexing ...");
+        db.execute_batch(&gri_sql)?;
+    }
+
+    info!("\tANALYZE ...");
+    db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
+
+    Ok(())
+}
+
+fn create_indexes_exec(db: &rusqlite::Connection, sql: &str, prefix: &str) -> Result<()> {
     for index_spec in sql.split(";") {
         let mut index_sql = index_spec.trim().to_string();
         if !index_sql.is_empty() {
             index_sql = util::simple_replace_all(&index_sql, "prefix", prefix);
             info!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
-            txn.execute_batch(&index_sql)?;
+            db.execute_batch(&index_sql)?;
         }
     }
     Ok(())
@@ -212,7 +208,7 @@ fn insert_gfa1_segment(
         invalid_gfa!("malformed S line");
     }
 
-    let rowid = name_to_rowid(tsv[1]);
+    let rowid = segment_name_to_id(tsv[1]);
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
     let maybe_sequence = if tsv.len() > 2 && tsv[2] != "*" {
         Some(tsv[2])
@@ -308,7 +304,7 @@ fn segment_and_orientation(
     orientation: &str,
     segments_by_name: &HashMap<String, i64>,
 ) -> Result<(i64, i64)> {
-    let segment_id = if let Some(id) = name_to_rowid(segment) {
+    let segment_id = if let Some(id) = segment_name_to_id(segment) {
         id
     } else if let Some(idr) = segments_by_name.get(segment) {
         *idr
@@ -325,7 +321,7 @@ fn segment_and_orientation(
     Ok((segment_id, reverse))
 }
 
-fn name_to_rowid(name: &str) -> Option<i64> {
+pub fn segment_name_to_id(name: &str) -> Option<i64> {
     let namelen = name.len();
     match name.parse() {
         Ok(i) => Some(i),
@@ -365,4 +361,32 @@ fn prepare_tags_json(tsv: &Vec<&str>, offset: usize) -> Result<json::object::Obj
         }
     }
     Ok(ans)
+}
+
+pub fn summary(db: &rusqlite::Connection) -> Result<()> {
+    info!("tables & row counts:");
+    let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
+    let mut tables = stmt_tables.query(NO_PARAMS)?;
+    while let Some(row) = tables.next()? {
+        let table: String = row.get(0)?;
+        let ct: i64 = db.query_row(
+            &format!("SELECT count(1) FROM {}", table),
+            NO_PARAMS,
+            |ctr| ctr.get(0),
+        )?;
+        info!("\t{}\t{}", table, ct);
+    }
+    if let Some(e) = db
+        .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
+            Ok(util::Error::InvalidGfab {
+                message: String::from("foreign key integrity violation"),
+                table: row.get(0)?,
+                rowid: row.get(1)?,
+            })
+        })
+        .optional()?
+    {
+        return Err(e);
+    }
+    Ok(())
 }

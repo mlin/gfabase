@@ -5,6 +5,7 @@ extern crate log;
 use fern::colors::{Color, ColoredLevelConfig};
 
 mod load;
+mod sub;
 mod util;
 mod version;
 mod view;
@@ -20,11 +21,14 @@ enum SubCommand {
     /// display software versions
     Version,
 
-    /// .gfa => .gfab
+    /// in.gfa => out.gfab
     Load(load::Opts),
 
-    /// .gfab => .gfa
+    /// in.gfab => out.gfa
     View(view::Opts),
+
+    /// in.gfab => subgraph.gfab
+    Sub(sub::Opts),
 }
 
 fn main() -> Result<()> {
@@ -53,5 +57,6 @@ fn main() -> Result<()> {
         SubCommand::Version => Ok(version::main()?),
         SubCommand::Load(subopts) => Ok(load::main(&subopts)?),
         SubCommand::View(subopts) => Ok(view::main(&subopts)?),
+        SubCommand::Sub(subopts) => Ok(sub::main(&subopts)?),
     }
 }

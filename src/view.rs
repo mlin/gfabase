@@ -71,7 +71,7 @@ fn write_segments(
     prefix: &str,
     writer: &mut dyn io::Write,
 ) -> Result<()> {
-    let rgfa = is_rgfa(db, prefix)?;
+    let rgfa = is_rgfa(db, "", prefix)?;
     let segments_query_sql = if !rgfa {
         format!(
             "SELECT
@@ -160,11 +160,11 @@ fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
     Ok(())
 }
 
-fn is_rgfa(db: &rusqlite::Connection, prefix: &str) -> Result<bool> {
+pub fn is_rgfa(db: &rusqlite::Connection, schema: &str, prefix: &str) -> Result<bool> {
     let ct: i64 = db.query_row(
         &format!(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' and name='{}gfa1_reference'",
-            prefix
+            "SELECT COUNT(1) FROM {}sqlite_master WHERE type='table' and name='{}gfa1_reference'",
+            schema, prefix
         ),
         NO_PARAMS,
         |row| row.get(0),
