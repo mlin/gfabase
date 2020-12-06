@@ -11,6 +11,7 @@ mod version;
 mod view;
 
 #[derive(Clap)]
+#[clap(version = env!("CARGO_PKG_VERSION"))]
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
@@ -18,7 +19,7 @@ struct Opts {
 
 #[derive(Clap)]
 enum SubCommand {
-    /// display software versions
+    /// display more-detailed version info
     Version,
 
     /// in.gfa => out.gfab

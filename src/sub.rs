@@ -43,26 +43,6 @@ pub fn main(opts: &Opts) -> Result<()> {
     // create output database
     let mut db = load::new_db(&opts.outfile, 6, 1024)?;
 
-    // load the desired segment IDs into a temp table
-    {
-        let txn = db.transaction()?;
-        txn.execute_batch(
-            "CREATE TABLE temp.desired_segments(segment_id INTEGER PRIMARY KEY);
-                           CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);",
-        )?;
-        {
-            let mut insert_segment =
-                txn.prepare("INSERT INTO temp.desired_segments(segment_id) VALUES(?)")?;
-            for segment in &opts.segments {
-                match load::segment_name_to_id(segment) {
-                    None => bad_command!("don't know what to do with {}", segment), // FIXME
-                    Some(segment_id) => insert_segment.execute(params![segment_id]).map(|_| ())?,
-                }
-            }
-        }
-        txn.commit()?
-    }
-
     // attach input database
     let mut dbopts_in = json::object::Object::new();
     dbopts_in.insert("immutable", json::JsonValue::from(true));
@@ -70,52 +50,66 @@ pub fn main(opts: &Opts) -> Result<()> {
     debug!("{}", attach_sql);
     db.execute_batch(&attach_sql)?;
 
-    // check existence of all desired segment IDs
-    db.execute_batch(&format!(
-        "INSERT INTO temp.unknown_segments
-         SELECT temp.desired_segments.segment_id AS segment_id
-         FROM temp.desired_segments LEFT JOIN input.{}gfa1_segment_meta USING (segment_id)
-         WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
-        prefix, prefix
-    ))?;
-    let n_unknown: i64 = db.query_row(
-        "SELECT count(1) FROM temp.unknown_segments",
-        NO_PARAMS,
-        |row| row.get(0),
-    )?;
-    if n_unknown > 0 {
-        // TODO: error! log up to 10 of the missing segment IDs
-        bad_command!(
-            "{} of {} desired segment IDs aren't present in {}",
-            n_unknown,
-            opts.segments.len(),
-            &opts.gfab
-        );
-    }
-
-    let rgfa = view::is_rgfa(&db, "input.", prefix)?;
     {
         let txn = db.transaction()?;
-        // TODO: if rgfa, copy _gri_refseq
+
+        // populate temp ID table with the user-specified segments
+        txn.execute_batch(
+            "CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY);
+             CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);",
+        )?;
+        {
+            let mut insert_segment =
+                txn.prepare("INSERT INTO temp.start_segments(segment_id) VALUES(?)")?;
+            for segment in &opts.segments {
+                match load::segment_name_to_id(segment) {
+                    None => bad_command!("don't know what to do with {}", segment), // FIXME
+                    Some(segment_id) => insert_segment.execute(params![segment_id]).map(|_| ())?,
+                }
+            }
+        }
+
+        // check existence of all the specified segments
+        txn.execute_batch(&format!(
+            "INSERT INTO temp.unknown_segments
+             SELECT temp.start_segments.segment_id AS segment_id
+             FROM temp.start_segments LEFT JOIN input.{}gfa1_segment_meta USING (segment_id)
+             WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
+            prefix, prefix
+        ))?;
+        let n_unknown: i64 = txn.query_row(
+            "SELECT count(1) FROM temp.unknown_segments",
+            NO_PARAMS,
+            |row| row.get(0),
+        )?;
+        if n_unknown > 0 {
+            // TODO: error! log up to 10 of the missing segment IDs
+            bad_command!(
+                "{} of {} desired segment IDs aren't present in {}",
+                n_unknown,
+                opts.segments.len(),
+                &opts.gfab
+            );
+        }
+
+        if opts.connected {
+            // sub_segments = connected components including start_segments
+            let mut connected_sql = include_str!("query/connected_old.sql").to_string();
+            connected_sql = util::simple_replace_all(&connected_sql, "prefix", prefix)
+                + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
+            txn.execute_batch(&connected_sql)?;
+        } else {
+            // sub_segments = start_segments
+            txn.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
+        }
+
+        let rgfa = view::is_rgfa(&txn, "input.", prefix)?;
         load::create_tables(&txn, prefix, rgfa)?;
 
-        info!("copying segment sequences...");
-        txn.execute_batch(&format!(
-            "INSERT INTO {}gfa1_segment_sequence(segment_id,sequence_twobit)
-             SELECT segment_id, sequence_twobit FROM input.{}gfa1_segment_sequence
-                WHERE segment_id IN temp.desired_segments
-                ORDER BY segment_id",
-            prefix, prefix
-        ))?;
-
-        info!("copying segment metadata...");
-        txn.execute_batch(&format!(
-            "INSERT INTO {}gfa1_segment_meta(segment_id,name,tags_json)
-             SELECT segment_id, name, tags_json FROM input.{}gfa1_segment_meta
-                WHERE segment_id IN temp.desired_segments
-                ORDER BY segment_id",
-            prefix, prefix
-        ))?;
+        info!("copying segments & links...");
+        let mut sub_sql = include_str!("query/sub.sql").to_string();
+        sub_sql = util::simple_replace_all(&sub_sql, "prefix", prefix);
+        txn.execute_batch(&sub_sql)?;
 
         if rgfa {
             // TODO: copy _gri_refseq
@@ -123,21 +117,11 @@ pub fn main(opts: &Opts) -> Result<()> {
             txn.execute_batch(&format!(
                 "INSERT INTO {}gfa1_reference(segment_id,rid,position,length,rank)
                  SELECT segment_id, rid, position, length, rank FROM input.{}gfa1_reference
-                    WHERE segment_id IN temp.desired_segments
+                    WHERE segment_id IN temp.sub_segments
                     ORDER BY segment_id",
                 prefix, prefix
             ))?;
         }
-
-        info!("copying relevant links...");
-        txn.execute_batch(&format!(
-            "INSERT INTO {}gfa1_link(from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json)
-             SELECT from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json FROM input.{}gfa1_link
-                WHERE from_segment IN temp.desired_segments
-                AND to_segment IN temp.desired_segments
-                ORDER BY from_segment, to_segment",
-            prefix, prefix
-        ))?;
 
         load::create_indexes(&txn, prefix, rgfa)?;
 

@@ -118,7 +118,6 @@ pub fn create_tables(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Res
 }
 
 pub fn create_indexes(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
-    // create indexes
     info!("indexing:");
     create_indexes_exec(db, &include_str!("schema/GFA1.index.sql"), prefix)?;
 
