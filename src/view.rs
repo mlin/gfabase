@@ -3,7 +3,6 @@ use genomicsqlite::ConnectionMethods;
 use json::JsonValue;
 use log::{debug, error, info, warn};
 use rusqlite::{params, OpenFlags, Statement, NO_PARAMS};
-use std::io::Write;
 use std::{fs, io};
 
 use crate::util;
@@ -36,6 +35,9 @@ pub struct Opts {
 // links; (ii) the end_pos of each R0 segment along each of its incoming links. We can only know
 // the coordinates for a R>0 segment once all of its edges have been thusly filled in.
 // (speed heuristic -- "page in" the links table in slabs)
+//
+// two recursive passes for connected components: first follow incoming back to "sources", then
+// follow outgoing to saturation
 
 pub fn main(opts: &Opts) -> Result<()> {
     let prefix = "";
@@ -52,13 +54,24 @@ pub fn main(opts: &Opts) -> Result<()> {
     )?;
 
     // open output writer
-    let mut writer: Box<dyn io::Write> = match opts.gfa.as_ref().map(String::as_str) {
+    let mut writer_box: Box<dyn io::Write> = match opts.gfa.as_ref().map(String::as_str) {
         None | Some("-") | Some("") => Box::new(io::BufWriter::new(io::stdout())),
         Some(p) => Box::new(io::BufWriter::new(fs::File::create(p)?)),
     };
+    let writer = &mut *writer_box;
+    write_segments(&db, &prefix, writer)?;
+    write_links(&db, &prefix, writer)?;
+    writer.flush()?;
 
-    // segments
-    let rgfa = is_rgfa(&db, prefix)?;
+    Ok(())
+}
+
+fn write_segments(
+    db: &rusqlite::Connection,
+    prefix: &str,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
+    let rgfa = is_rgfa(db, prefix)?;
     let segments_query_sql = if !rgfa {
         format!(
             "SELECT
@@ -68,6 +81,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             prefix
         )
     } else {
+        // rGFA: also get SN/SO/SR tag values
         format!(
             "SELECT
                 segment_id, coalesce(name, cast(segment_id AS TEXT)),
@@ -91,34 +105,36 @@ pub fn main(opts: &Opts) -> Result<()> {
         if rgfa {
             let sn: String = segrow.get(4)?;
             let so: i64 = segrow.get(5)?;
-            let sr: i64 = segrow.get(6)?;
+            let sr: i64 = segrow.get(6)?;  // TODO: resolve to name
             writer.write_fmt(format_args!("\tSN:Z:{}\tSO:i:{}\tSR:i:{}", sn, so, sr))?;
         }
         write_tags(
             &format!("{}gfa1_segments_meta", prefix),
             rowid,
             &tags_json,
-            &mut writer,
+            writer,
         )?;
         writer.write(b"\n")?;
     }
+    Ok(())
+}
 
-    // links
+fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Write) -> Result<()> {
     let mut links_query = db.prepare(&format!(
         // this two-layer join resolves the two segment IDs to names (if any)
         "SELECT
             link_id, from_segment_name, from_reverse,
             coalesce({prefix}gfa1_segment_meta.name, cast(to_segment AS TEXT)) AS to_segment_name,
             to_reverse, cigar, link_tags_json
-         FROM
+        FROM
             (SELECT
                 {prefix}gfa1_link._rowid_ AS link_id,
                 coalesce({prefix}gfa1_segment_meta.name, cast(from_segment AS TEXT)) AS from_segment_name,
                 from_reverse, to_segment, to_reverse, coalesce(cigar, '*') AS cigar,
                 coalesce({prefix}gfa1_link.tags_json, '{{}}') AS link_tags_json
-              FROM
+            FROM
                 {prefix}gfa1_link LEFT JOIN {prefix}gfa1_segment_meta ON from_segment = segment_id
-              ORDER BY from_segment, to_segment)
+            ORDER BY from_segment, to_segment)
             LEFT JOIN {prefix}gfa1_segment_meta ON to_segment = segment_id",
         prefix=prefix))?;
     let mut links_cursor = links_query.query(NO_PARAMS)?;
@@ -138,25 +154,25 @@ pub fn main(opts: &Opts) -> Result<()> {
             if to_reverse == 0 { '+' } else { '-' },
             cigar
         ))?;
-        write_tags(
-            &format!("{}gfa1_link", prefix),
-            link_id,
-            &tags_json,
-            &mut writer,
-        )?;
+        write_tags(&format!("{}gfa1_link", prefix), link_id, &tags_json, writer)?;
         writer.write(b"\n")?;
     }
-
-    writer.flush()?;
     Ok(())
 }
 
-fn write_tags(
-    table: &str,
-    rowid: i64,
-    tags_json: &str,
-    writer: &mut Box<dyn io::Write>,
-) -> Result<()> {
+fn is_rgfa(db: &rusqlite::Connection, prefix: &str) -> Result<bool> {
+    let ct: i64 = db.query_row(
+        &format!(
+            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' and name='{}gfa1_reference'",
+            prefix
+        ),
+        NO_PARAMS,
+        |row| row.get(0),
+    )?;
+    Ok(ct > 0)
+}
+
+fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Write) -> Result<()> {
     let invalid = || util::Error::InvalidGfab {
         message: String::from("invalid tags_json"),
         table: String::from(table),
@@ -179,16 +195,4 @@ fn write_tags(
         writer.write_fmt(format_args!("\t{}:{}", k, vstr))?;
     }
     Ok(())
-}
-
-fn is_rgfa(db: &rusqlite::Connection, prefix: &str) -> Result<bool> {
-    let ct: i64 = db.query_row(
-        &format!(
-            "SELECT COUNT(1) FROM sqlite_master WHERE type='table' and name='{}gfa1_reference'",
-            prefix
-        ),
-        NO_PARAMS,
-        |row| row.get(0),
-    )?;
-    Ok(ct > 0)
 }
