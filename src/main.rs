@@ -6,6 +6,7 @@ use fern::colors::{Color, ColoredLevelConfig};
 
 mod load;
 mod util;
+mod version;
 mod view;
 
 #[derive(Clap)]
@@ -16,6 +17,9 @@ struct Opts {
 
 #[derive(Clap)]
 enum SubCommand {
+    /// display software versions
+    Version,
+
     /// .gfa => .gfab
     Load(load::Opts),
 
@@ -46,6 +50,7 @@ fn main() -> Result<()> {
     let opts = Opts::parse();
 
     match opts.subcmd {
+        SubCommand::Version => Ok(version::main()?),
         SubCommand::Load(subopts) => Ok(load::main(&subopts)?),
         SubCommand::View(subopts) => Ok(view::main(&subopts)?),
     }

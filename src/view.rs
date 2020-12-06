@@ -105,7 +105,7 @@ fn write_segments(
         if rgfa {
             let sn: String = segrow.get(4)?;
             let so: i64 = segrow.get(5)?;
-            let sr: i64 = segrow.get(6)?;  // TODO: resolve to name
+            let sr: i64 = segrow.get(6)?; // TODO: resolve to name
             writer.write_fmt(format_args!("\tSN:Z:{}\tSO:i:{}\tSR:i:{}", sn, so, sr))?;
         }
         write_tags(

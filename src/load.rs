@@ -61,9 +61,9 @@ pub fn main(opts: &Opts) -> Result<()> {
             info!("added rGFA schema");
         }
 
-        // add a temp table to hold segment metadata, which we'll copy into the db after writing
-        // the segment sequences; this is write the metadata ~contiguously into the db file instead
-        // of interspersed among the (typically much larger) sequence data.
+        // add a temp table to hold segment metadata, which we'll copy into the main db file after
+        // writing all the segment sequences; this ensures the metadata is stored ~contiguously
+        // instead of interspersed among the (typically much larger) sequence data.
         txn.execute_batch("CREATE TABLE temp.segment_meta_hold(segment_id INTEGER PRIMARY KEY, name TEXT, tags_json TEXT)")?;
 
         // intake GFA records
