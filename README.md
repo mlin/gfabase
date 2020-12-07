@@ -28,7 +28,7 @@ gfabase load <(zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst) /tmp/chr22
 gfabase sub /tmp/chr22_chrY.gfab /tmp/chrYonly.gfab --reference chrY:1-999,999,999
 gfabase view /tmp/chrYonly.gfab > /tmp/chrYonly.gfa
 
-# extract the entire connected component of chr2
+# extract the entire connected component of chr22
 gfabase sub /tmp/chr22_chrY.gfab /tmp/chr22.gfab --reference --connected chr22:1-999,999,999
 gfabase view /tmp/chr22.gfab > /tmp/chr22.gfa
 ```
