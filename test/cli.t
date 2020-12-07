@@ -22,7 +22,7 @@ is "$?" "0" "gfabase version"
 export TMPDIR=$(mktemp -d --tmpdir gfabase_cli_test_XXXXXX)
 
 # extract test rGFA
-zstd -dc test/data/GRCh38-20-0.10b.chr21_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa"
+zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa"
 
 # roundtrip it and check fidelity
 gfabase load --rgfa --compress 1 "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
