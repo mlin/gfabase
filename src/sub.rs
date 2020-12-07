@@ -68,9 +68,9 @@ pub fn main(opts: &Opts) -> Result<()> {
                      SELECT segment_id FROM {}gfa1_reference
                         WHERE _rowid_ in genomic_range_rowids(
                             '{}gfa1_reference',
-                            parse_genomic_range(?1,1),
-                            parse_genomic_range(?1,2),
-                            parse_genomic_range(?1,3))",
+                            parse_genomic_range_sequence(?1),
+                            parse_genomic_range_begin(?1),
+                            parse_genomic_range_end(?1))",
                     prefix, prefix
                 ))?
             };

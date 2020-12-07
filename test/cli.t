@@ -54,7 +54,7 @@ is "$sub_chr22_digest" "$chr22_digest" "chr22 reference segments"
 gfabase sub \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" \
     chr22:1-999999999 --reference --connected
-is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l)" "3319"
-is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l)" "4795"
+is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l)" "3319" "chr22-connected segments"
+is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l)" "4795" "chr22-connected links"
 
 rm -rf "$TMPDIR"
