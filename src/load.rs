@@ -44,12 +44,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         info!("processing GFA1 records...");
-        insert_gfa1(
-            &opts.gfa,
-            &txn,
-            prefix,
-            opts.rgfa,
-        )?;
+        insert_gfa1(&opts.gfa, &txn, prefix, opts.rgfa)?;
         info!("writing segment metadata...");
         txn.execute_batch(&format!(
             "INSERT INTO {}gfa1_segment_meta(segment_id, name, tags_json)

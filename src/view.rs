@@ -16,29 +16,6 @@ pub struct Opts {
     pub gfa: Option<String>,
 }
 
-// segment selection criteria:
-// - connected component of {segment(s), path}
-//   - selectable outgoing/incoming/bidirectional
-//   - max degree
-// - rGFA reference range
-//   - reference only
-//   - connected component (out/in/bi)
-//   - follow rank>0 arcs until rejoining rank==0 (to/from/by)
-// - custom SQL WHERE
-//
-// idea: optionally include rank>0 segments in rGFA GRI, based on the widest linear range reachable
-// by passing other rank>0 segments only. Then we could find alleles that "contain" a query segment
-// even if they don't start or end within. Build recursively starting from nodes directly connected
-// to reference segments. This would allow us to serve linear range queries without link-traversal
-// loops.
-// To seed coordinates, propagate (i) the begin_pos of each R0 segment along each of its outgoing
-// links; (ii) the end_pos of each R0 segment along each of its incoming links. We can only know
-// the coordinates for a R>0 segment once all of its edges have been thusly filled in.
-// (speed heuristic -- "page in" the links table in slabs)
-//
-// two recursive passes for connected components: first follow incoming back to "sources", then
-// follow outgoing to saturation
-
 pub fn main(opts: &Opts) -> Result<()> {
     let prefix = "";
 
