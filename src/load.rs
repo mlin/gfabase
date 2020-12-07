@@ -11,10 +11,11 @@ use crate::util::Result;
 
 #[derive(Clap)]
 pub struct Opts {
+    /// uncompressed GFA file/stream (use - for stdin)
+    pub gfa: String,
+
     /// destination gfab filename
     pub gfab: String,
-    /// input GFA file [stdin]
-    pub gfa: Option<String>,
 
     /// add genomic range index from rGFA input
     #[clap(long)]
@@ -44,7 +45,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         // intake GFA records
         info!("processing GFA1 records...");
         insert_gfa1(
-            opts.gfa.as_ref().unwrap_or(&String::from("")),
+            &opts.gfa,
             &txn,
             prefix,
             opts.rgfa,
