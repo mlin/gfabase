@@ -102,12 +102,12 @@ pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusql
 
 pub fn create_tables(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
     let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
-    gfa_sql = util::simple_replace_all(&gfa_sql, "prefix", prefix);
+    gfa_sql = util::simple_placeholder(&gfa_sql, "prefix", prefix);
     db.execute_batch(&gfa_sql)?;
 
     if rgfa {
         let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
-        rgfa_sql = util::simple_replace_all(&rgfa_sql, "prefix", prefix);
+        rgfa_sql = util::simple_placeholder(&rgfa_sql, "prefix", prefix);
         db.execute_batch(&rgfa_sql)?;
         info!("created [r]GFA1 tables");
     } else {
@@ -144,7 +144,7 @@ fn create_indexes_exec(db: &rusqlite::Connection, sql: &str, prefix: &str) -> Re
     for index_spec in sql.split(";") {
         let mut index_sql = index_spec.trim().to_string();
         if !index_sql.is_empty() {
-            index_sql = util::simple_replace_all(&index_sql, "prefix", prefix);
+            index_sql = util::simple_placeholder(&index_sql, "prefix", prefix);
             info!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
             db.execute_batch(&index_sql)?;
         }

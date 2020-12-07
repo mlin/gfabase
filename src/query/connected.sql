@@ -3,7 +3,7 @@
 -- OUT: segment IDs in temp.connected_segments
 --
 -- Requires SQLite 3.34.0 (2020-12-01) for the compound recursive select feature added therein. See
--- connected_old.sql for a less-elegant equivalent that's compatible with older versions.
+-- connected_old.sql for a less-elegant equivalent for older versions.
 
 DROP TABLE IF EXISTS temp.connected_segments;
 CREATE TABLE temp.connected_segments(segment_id INTEGER PRIMARY KEY);

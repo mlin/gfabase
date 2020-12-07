@@ -20,6 +20,10 @@ pub struct Opts {
     #[clap(long)]
     pub connected: bool,
 
+    /// <SEGMENT>s are reference ranges like chr7:1,234-5,678 to locate in rGFA
+    #[clap(long)]
+    pub reference: bool,
+
     /// desired segment(s)
     #[clap(name = "SEGMENT")]
     pub segments: Vec<String>,
@@ -54,27 +58,42 @@ pub fn main(opts: &Opts) -> Result<()> {
         let txn = db.transaction()?;
 
         // populate temp ID table with the user-specified segments
-        txn.execute_batch(
-            "CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY);
-             CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);",
-        )?;
+        txn.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
         {
-            let mut insert_segment =
-                txn.prepare("INSERT INTO temp.start_segments(segment_id) VALUES(?)")?;
+            let mut insert_segment = if !opts.reference {
+                txn.prepare("INSERT INTO temp.start_segments(segment_id) VALUES(?)")?
+            } else {
+                txn.prepare(&format!(
+                    "INSERT INTO temp.start_segments(segment_id)
+                     SELECT _rowid_ from genomic_range_rowids(
+                        '{}gfa1_reference',
+                        parse_genomic_range(?1,1),
+                        parse_genomic_range(?1,2),
+                        parse_genomic_range(?1,3))",
+                    prefix
+                ))?
+            };
             for segment in &opts.segments {
-                match load::segment_name_to_id(segment) {
-                    None => bad_command!("don't know what to do with {}", segment), // FIXME
-                    Some(segment_id) => insert_segment.execute(params![segment_id]).map(|_| ())?,
+                if opts.reference {
+                    if insert_segment.execute(params![segment])? < 1 {
+                        bad_command!("no segments found overlapping {}", segment);
+                    }
+                } else if let Some(segment_id) = load::segment_name_to_id(segment) {
+                    insert_segment.execute(params![segment_id]).map(|_| ())?;
+                } else {
+                    // FIXME try to find by segment name
+                    bad_command!("don't know what to do with {}", segment);
                 }
             }
         }
 
         // check existence of all the specified segments
         txn.execute_batch(&format!(
-            "INSERT INTO temp.unknown_segments
-             SELECT temp.start_segments.segment_id AS segment_id
-             FROM temp.start_segments LEFT JOIN input.{}gfa1_segment_meta USING (segment_id)
-             WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
+            "CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);
+             INSERT INTO temp.unknown_segments
+                 SELECT temp.start_segments.segment_id AS segment_id
+                 FROM temp.start_segments LEFT JOIN input.{}gfa1_segment_meta USING (segment_id)
+                 WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
             prefix, prefix
         ))?;
         let n_unknown: i64 = txn.query_row(
@@ -95,8 +114,9 @@ pub fn main(opts: &Opts) -> Result<()> {
         if opts.connected {
             // sub_segments = connected components including start_segments
             let mut connected_sql = include_str!("query/connected_old.sql").to_string();
-            connected_sql = util::simple_replace_all(&connected_sql, "prefix", prefix)
+            connected_sql = util::simple_placeholder(&connected_sql, "prefix", prefix)
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
+            info!("computing connected component(s)...");
             txn.execute_batch(&connected_sql)?;
         } else {
             // sub_segments = start_segments
@@ -108,7 +128,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         info!("copying segments & links...");
         let mut sub_sql = include_str!("query/sub.sql").to_string();
-        sub_sql = util::simple_replace_all(&sub_sql, "prefix", prefix);
+        sub_sql = util::simple_placeholder(&sub_sql, "prefix", prefix);
         txn.execute_batch(&sub_sql)?;
 
         if rgfa {

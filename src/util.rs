@@ -74,7 +74,7 @@ where
     fold_tsv_no_comments(|(), tsv| f(tsv), (), filename, comment)
 }
 
-pub fn simple_replace_all(template: &str, key: &str, val: &str) -> String {
+pub fn simple_placeholder(template: &str, key: &str, val: &str) -> String {
     let pat = r"\{\{\s*".to_string() + key + r"\s*\}\}";
     regex::Regex::new(&pat)
         .unwrap()
