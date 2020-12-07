@@ -34,4 +34,6 @@ jobs:
     - name: build
       run: cargo build --release
     - name: test
-      run: prove -v test/cli.t
+      run: |
+        git submodule update --init --recursive
+        prove -v test/cli.t
