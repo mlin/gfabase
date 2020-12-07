@@ -65,12 +65,13 @@ pub fn main(opts: &Opts) -> Result<()> {
             } else {
                 txn.prepare(&format!(
                     "INSERT INTO temp.start_segments(segment_id)
-                     SELECT _rowid_ from genomic_range_rowids(
-                        '{}gfa1_reference',
-                        parse_genomic_range(?1,1),
-                        parse_genomic_range(?1,2),
-                        parse_genomic_range(?1,3))",
-                    prefix
+                     SELECT segment_id FROM {}gfa1_reference
+                        WHERE _rowid_ in genomic_range_rowids(
+                            '{}gfa1_reference',
+                            parse_genomic_range(?1,1),
+                            parse_genomic_range(?1,2),
+                            parse_genomic_range(?1,3))",
+                    prefix, prefix
                 ))?
             };
             for segment in &opts.segments {
