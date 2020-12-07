@@ -1,0 +1,39 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+
+  lint:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        components: rustfmt, clippy
+        toolchain: stable
+        default: true
+    - name: rust lint
+      run: |
+        cargo check --no-default-features
+        cargo fmt -- --check
+
+  test:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        default: true
+    - name: build
+      run: cargo build --release
+    - name: test
+      run: |
+        git submodule update --init --recursive
+        prove -v test/cli.t

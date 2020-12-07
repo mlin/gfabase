@@ -5,10 +5,16 @@ authors = ["Mike Lin <dna@mlin.net>"]
 edition = "2018"
 
 [dependencies]
-genomicsqlite = "0.5.0-dev.1"
-rusqlite = "^0.24"
+genomicsqlite = "0.5.1-dev.2"
 clap = "3.0.0-beta.2"
 json = "^0"
 log = "^0.4"
 fern = { version = "^0.5", features = ["colored"] }
 regex = "^1.1"
+anyhow = "^1.0"
+thiserror = "^1.0"
+tempfile = "3"
+
+[dependencies.rusqlite]
+version = "0.24.2"
+features = ["bundled"]
