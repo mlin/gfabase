@@ -36,4 +36,4 @@ jobs:
     - name: test
       run: |
         git submodule update --init --recursive
-        prove -v test/cli.t
+        prove -v test/*.t

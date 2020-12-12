@@ -79,7 +79,7 @@ pub fn main(opts: &Opts) -> Result<()> {
                     if insert_segment.execute(params![segment])? < 1 {
                         bad_command!("no segments found overlapping {}", segment);
                     }
-                } else if let Some(segment_id) = load::segment_name_to_id(segment) {
+                } else if let Some(segment_id) = load::name_to_id(segment) {
                     insert_segment.execute(params![segment_id]).map(|_| ())?;
                 } else {
                     // FIXME try to find by segment name

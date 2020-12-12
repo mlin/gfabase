@@ -38,6 +38,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     let writer = &mut *writer_box;
     write_segments(&db, &prefix, writer)?;
     write_links(&db, &prefix, writer)?;
+    write_paths(&db, &prefix, writer)?;
     writer.flush()?;
 
     Ok(())
@@ -97,6 +98,7 @@ fn write_segments(
 }
 
 fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Write) -> Result<()> {
+    let link_table = &format!("{}gfa1_link", prefix);
     let mut links_query = db.prepare(&format!(
         // this two-layer join resolves the two segment IDs to names (if any)
         "SELECT
@@ -131,7 +133,56 @@ fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
             if to_reverse == 0 { '+' } else { '-' },
             cigar
         ))?;
-        write_tags(&format!("{}gfa1_link", prefix), link_id, &tags_json, writer)?;
+        write_tags(&link_table, link_id, &tags_json, writer)?;
+        writer.write(b"\n")?;
+    }
+    Ok(())
+}
+
+fn write_paths(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Write) -> Result<()> {
+    let path_table = format!("{}gfa1_path", prefix);
+    let mut paths_query = db.prepare(&format!(
+        "SELECT path_id, coalesce(name, cast(path_id AS TEXT)), coalesce(tags_json, '{{}}')
+         FROM {} ORDER BY path_id",
+        path_table
+    ))?;
+    let mut elements_query = db.prepare(&format!(
+        "SELECT
+            coalesce(name, cast(segment_id AS TEXT)) AS segment_name, reverse, cigar_vs_next
+         FROM {}gfa1_path_element LEFT JOIN {}gfa1_segment_meta USING(segment_id)
+         WHERE path_id=? ORDER BY path_id, ordinal",
+        prefix, prefix
+    ))?;
+    let mut paths_cursor = paths_query.query(NO_PARAMS)?;
+    while let Some(pathrow) = paths_cursor.next()? {
+        let path_id: i64 = pathrow.get(0)?;
+        let name: String = pathrow.get(1)?;
+        let tags_json: String = pathrow.get(2)?;
+
+        let mut elts_csv = Vec::new();
+        let mut cigars_csv = Vec::new();
+        let mut elts_cursor = elements_query.query(params![path_id])?;
+        while let Some(eltrow) = elts_cursor.next()? {
+            let segment_name: String = eltrow.get(0)?;
+            let reverse: i64 = eltrow.get(1)?;
+            let maybe_cigar: Option<String> = eltrow.get(2)?;
+            elts_csv.push(segment_name + if reverse == 0 { "+" } else { "-" });
+            if let Some(cigar) = maybe_cigar {
+                cigars_csv.push(cigar);
+            }
+        }
+
+        writer.write_fmt(format_args!(
+            "P\t{}\t{}\t{}",
+            &name,
+            &elts_csv.join(","),
+            if cigars_csv.len() > 0 {
+                cigars_csv.join(",")
+            } else {
+                String::from("*")
+            }
+        ))?;
+        write_tags(&path_table, path_id, &tags_json, writer)?;
         writer.write(b"\n")?;
     }
     Ok(())

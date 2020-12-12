@@ -167,6 +167,14 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
             prefix
         ))?)
     }
+    let mut stmt_insert_path = txn.prepare(&format!(
+        "INSERT INTO {}gfa1_path(path_id,name,tags_json) VALUES(?,?,?)",
+        prefix
+    ))?;
+    let mut stmt_insert_path_element = txn.prepare(&format!(
+        "INSERT INTO {}gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_next) VALUES(?,?,?,?,?)",
+        prefix
+    ))?;
 
     let mut segments_by_name = HashMap::new();
 
@@ -182,6 +190,13 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
                 &mut segments_by_name,
             ),
             "L" => insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name),
+            "P" => insert_gfa1_path(
+                tsv,
+                txn,
+                &mut stmt_insert_path,
+                &mut stmt_insert_path_element,
+                &segments_by_name,
+            ),
             _ => invalid_gfa!("GFA record type {} not yet supported", tsv[0]),
         }
     };
@@ -203,7 +218,7 @@ fn insert_gfa1_segment(
         invalid_gfa!("malformed S line");
     }
 
-    let rowid = segment_name_to_id(tsv[1]);
+    let rowid = name_to_id(tsv[1]);
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
     let maybe_sequence = if tsv.len() > 2 && tsv[2] != "*" {
         Some(tsv[2])
@@ -294,17 +309,82 @@ fn insert_gfa1_link(
     Ok(())
 }
 
+fn insert_gfa1_path(
+    tsv: &Vec<&str>,
+    txn: &Transaction,
+    stmt_path: &mut Statement,
+    stmt_ele: &mut Statement,
+    segments_by_name: &HashMap<String, i64>,
+) -> Result<()> {
+    assert_eq!(tsv[0], "P");
+    if tsv.len() < 3 {
+        invalid_gfa!("malformed P line: {}", tsv.join("\t"));
+    }
+
+    let rowid = name_to_id(tsv[1]);
+    let name = if rowid.is_some() { None } else { Some(tsv[1]) };
+
+    let maybe_cigars: Option<Vec<&str>> = if tsv.len() > 3 && tsv[3] != "*" {
+        Some(tsv[3].split(',').collect())
+    } else {
+        None
+    };
+    let tags_json = prepare_tags_json(tsv, 4)?;
+    let tags_json_text = tags_json.dump();
+
+    stmt_path.execute(params![
+        rowid,
+        name,
+        if tags_json_text.trim() != "{}" {
+            Some(tags_json_text)
+        } else {
+            None
+        }
+    ])?;
+    let rowid_actual = txn.last_insert_rowid();
+
+    let segs: Vec<&str> = tsv[2].split(',').collect();
+    if let Some(cigars) = &maybe_cigars {
+        if cigars.len() + 1 != segs.len() {
+            invalid_gfa!("incorrect overlaps: {}", tsv.join("\t"));
+        }
+    }
+    for ord in 0..segs.len() {
+        let ele = segs[ord];
+        if ele.len() < 2 {
+            invalid_gfa!("malformed path: {}", tsv[2]);
+        }
+        let (segment_id, reverse) = segment_and_orientation(
+            &ele[..(ele.len() - 1)],
+            &ele[(ele.len() - 1)..ele.len()],
+            segments_by_name,
+        )?;
+        let cigar = match (&maybe_cigars, ord) {
+            (Some(cigars), i) if i < segs.len() - 1 => Some(cigars[i]),
+            _ => None,
+        };
+        stmt_ele.execute(params![
+            rowid_actual,
+            ord as i64,
+            segment_id,
+            reverse,
+            cigar
+        ])?;
+    }
+    Ok(())
+}
+
 fn segment_and_orientation(
     segment: &str,
     orientation: &str,
     segments_by_name: &HashMap<String, i64>,
 ) -> Result<(i64, i64)> {
-    let segment_id = if let Some(id) = segment_name_to_id(segment) {
+    let segment_id = if let Some(id) = name_to_id(segment) {
         id
     } else if let Some(idr) = segments_by_name.get(segment) {
         *idr
     } else {
-        invalid_gfa!("unknown segment in link: {}", segment)
+        invalid_gfa!("unknown segment in link/path: {}", segment)
     };
     let reverse = match orientation {
         "+" => 0,
@@ -316,7 +396,7 @@ fn segment_and_orientation(
     Ok((segment_id, reverse))
 }
 
-pub fn segment_name_to_id(name: &str) -> Option<i64> {
+pub fn name_to_id(name: &str) -> Option<i64> {
     let namelen = name.len();
     match name.parse() {
         Ok(i) => Some(i),

@@ -59,6 +59,6 @@ CREATE TABLE {{prefix}}gfa1_path_element(
     segment_id INTEGER NOT NULL
         REFERENCES {{prefix}}gfa1_segment_meta(segment_id),
     reverse INTEGER NOT NULL,                       -- {0,1}
-    cigar_vs_prev TEXT,                             -- NULL for the first element
+    cigar_vs_next TEXT,                             -- NULL for the last element
     PRIMARY KEY (path_id,ordinal)
 ) WITHOUT ROWID;
