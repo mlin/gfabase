@@ -25,10 +25,10 @@ export TMPDIR=$(mktemp -d --tmpdir gfabase_cli_test_XXXXXX)
 zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa"
 
 # roundtrip it and check fidelity
-gfabase load --rgfa --compress 1 "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
+gfabase load --compress 1 "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
 is "$?" "0" "gfabase load"
 cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" \
-    | gfabase load --rgfa --compress 1 - "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
+    | gfabase load --compress 1 - "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
 is "$?" "0" "gfabase load stdin"
 
 gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.roundtrip.gfa"

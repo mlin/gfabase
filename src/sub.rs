@@ -61,13 +61,14 @@ pub fn main(opts: &Opts) -> Result<()> {
         txn.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
         {
             let mut insert_segment = if !opts.reference {
-                txn.prepare("INSERT INTO temp.start_segments(segment_id) VALUES(?)")?
+                txn.prepare("INSERT OR REPLACE INTO temp.start_segments(segment_id) VALUES(?)")?
             } else {
+                // GRI query
                 txn.prepare(&format!(
-                    "INSERT INTO temp.start_segments(segment_id)
-                     SELECT segment_id FROM {}gfa1_reference
+                    "INSERT OR REPLACE INTO temp.start_segments(segment_id)
+                     SELECT segment_id FROM {}gfa1_segment_mapping
                         WHERE _rowid_ in genomic_range_rowids(
-                            '{}gfa1_reference',
+                            '{}gfa1_segment_mapping',
                             parse_genomic_range_sequence(?1),
                             parse_genomic_range_begin(?1),
                             parse_genomic_range_end(?1))",
@@ -124,27 +125,14 @@ pub fn main(opts: &Opts) -> Result<()> {
             txn.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
         }
 
-        let rgfa = view::is_rgfa(&txn, "input.", prefix)?;
-        load::create_tables(&txn, prefix, rgfa)?;
+        load::create_tables(&txn, prefix)?;
 
         info!("copying segments & links...");
         let mut sub_sql = include_str!("query/sub.sql").to_string();
         sub_sql = util::simple_placeholder(&sub_sql, "prefix", prefix);
         txn.execute_batch(&sub_sql)?;
 
-        if rgfa {
-            // TODO: copy _gri_refseq
-            info!("copying rGFA coordinates...");
-            txn.execute_batch(&format!(
-                "INSERT INTO {}gfa1_reference(segment_id,rid,position,length,rank)
-                 SELECT segment_id, rid, position, length, rank FROM input.{}gfa1_reference
-                    WHERE segment_id IN temp.sub_segments
-                    ORDER BY segment_id",
-                prefix, prefix
-            ))?;
-        }
-
-        load::create_indexes(&txn, prefix, rgfa)?;
+        load::create_indexes(&txn, prefix)?;
 
         info!("flushing {} ...", &opts.outfile);
         txn.commit()?

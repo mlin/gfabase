@@ -12,6 +12,12 @@ INSERT INTO {{prefix}}gfa1_segment_meta(segment_id, name, tags_json)
     WHERE segment_id IN temp.sub_segments
     ORDER BY segment_id;
 
+INSERT INTO {{prefix}}gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json)
+    SELECT segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json
+    FROM input.{{prefix}}gfa1_segment_mapping
+    WHERE segment_id IN temp.sub_segments
+    ORDER BY segment_id;
+
 INSERT INTO {{prefix}}gfa1_link(from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json)
     SELECT from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json FROM input.{{prefix}}gfa1_link
     WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments

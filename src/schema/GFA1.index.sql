@@ -1,6 +1,9 @@
 CREATE UNIQUE INDEX {{prefix}}gfa1_segment_name ON
     {{prefix}}gfa1_segment_meta(name) WHERE name IS NOT NULL;
 
+CREATE INDEX {{prefix}}gfa1_segment_mappings_segment ON
+    {{prefix}}gfa1_segment_mapping(segment_id);
+
 CREATE INDEX {{prefix}}gfa1_link_from_to ON
     {{prefix}}gfa1_link(from_segment,to_segment);
 CREATE INDEX {{prefix}}gfa1_link_to_from ON

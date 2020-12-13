@@ -49,25 +49,13 @@ fn write_segments(
     prefix: &str,
     writer: &mut dyn io::Write,
 ) -> Result<()> {
-    let rgfa = is_rgfa(db, "", prefix)?;
-    let segments_query_sql = if !rgfa {
-        format!(
-            "SELECT
-                segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
-                coalesce(tags_json, '{{}}'), sequence
-             FROM {}gfa1_segment",
-            prefix
-        )
-    } else {
-        // rGFA: also get SN/SO/SR tag values
-        format!(
-            "SELECT
-                segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
-                coalesce(tags_json, '{{}}'), sequence, rid, position, rank
-             FROM {}gfa1_segment LEFT JOIN {}gfa1_reference USING (segment_id)",
-            prefix, prefix
-        )
-    };
+    let segments_query_sql = format!(
+        "SELECT
+            segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
+            coalesce(tags_json, '{{}}'), sequence
+            FROM {}gfa1_segment",
+        prefix
+    );
     let mut segments_query = db.prepare(&segments_query_sql)?;
     let mut segments_cursor = segments_query.query(NO_PARAMS)?;
     while let Some(segrow) = segments_cursor.next()? {
@@ -83,12 +71,6 @@ fn write_segments(
         ))?;
         if let Some(sequence_length) = maybe_sequence_length {
             writer.write_fmt(format_args!("\tLN:i:{}", sequence_length))?;
-        }
-        if rgfa {
-            let sn: String = segrow.get(5)?;
-            let so: i64 = segrow.get(6)?;
-            let sr: i64 = segrow.get(7)?;
-            writer.write_fmt(format_args!("\tSN:Z:{}\tSO:i:{}\tSR:i:{}", sn, so, sr))?;
         }
         write_tags(
             &format!("{}gfa1_segments_meta", prefix),
@@ -190,18 +172,6 @@ fn write_paths(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
         writer.write(b"\n")?;
     }
     Ok(())
-}
-
-pub fn is_rgfa(db: &rusqlite::Connection, schema: &str, prefix: &str) -> Result<bool> {
-    let ct: i64 = db.query_row(
-        &format!(
-            "SELECT COUNT(1) FROM {}sqlite_master WHERE type='table' and name='{}gfa1_reference'",
-            schema, prefix
-        ),
-        NO_PARAMS,
-        |row| row.get(0),
-    )?;
-    Ok(ct > 0)
 }
 
 fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Write) -> Result<()> {

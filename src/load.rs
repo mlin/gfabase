@@ -17,10 +17,6 @@ pub struct Opts {
     /// destination gfab filename
     pub gfab: String,
 
-    /// add genomic range index from rGFA input
-    #[clap(long)]
-    pub rgfa: bool,
-
     /// Zstandard compression level (-7 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
@@ -35,31 +31,43 @@ pub fn main(opts: &Opts) -> Result<()> {
     {
         // open transaction & apply schema
         let txn = db.transaction()?;
-        create_tables(&txn, prefix, opts.rgfa)?;
+        create_tables(&txn, prefix)?;
 
-        // add a temp table to hold segment metadata, which we'll copy into the main db file after
-        // writing all the segment sequences; this ensures the metadata is stored ~contiguously
-        // instead of interspersed among the (typically much larger) sequence data.
+        // add temp tables for metadata, which we'll copy into the main db file after writing all
+        // the segment sequences; this ensures the metadata is stored ~contiguously instead of
+        // interspersed among the (typically much larger) sequence data.
         txn.execute_batch(
             "CREATE TABLE temp.segment_meta_hold(
                 segment_id INTEGER PRIMARY KEY, name TEXT,
                 sequence_length INTEGER, tags_json TEXT
-            )",
+            );
+            CREATE TABLE temp.segment_mapping_hold(
+                segment_id INTEGER NOT NULL,
+                refseq_name TEXT NOT NULL,
+                refseq_begin INTEGER NOT NULL,
+                refseq_end INTEGER NOT NULL
+            );",
         )?;
 
         // intake GFA records
         info!("processing GFA1 records...");
-        insert_gfa1(&opts.gfa, &txn, prefix, opts.rgfa)?;
+        insert_gfa1(&opts.gfa, &txn, prefix)?;
         info!("writing segment metadata...");
+
+        // copy metadata as planned
         txn.execute_batch(&format!(
             "INSERT INTO {}gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
-             SELECT segment_id, name, sequence_length, tags_json FROM temp.segment_meta_hold",
-            prefix
+                SELECT segment_id, name, sequence_length, tags_json
+                FROM temp.segment_meta_hold;
+             INSERT INTO {}gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
+                SELECT segment_id, refseq_name, refseq_begin, refseq_end
+                FROM temp.segment_mapping_hold ORDER BY segment_id",
+            prefix, prefix
         ))?;
         info!("insertions complete");
 
         // indexing
-        create_indexes(&txn, prefix, opts.rgfa)?;
+        create_indexes(&txn, prefix)?;
 
         // done
         info!("flushing {} ...", &opts.gfab);
@@ -101,48 +109,19 @@ pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusql
     Ok(db)
 }
 
-pub fn create_tables(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
+pub fn create_tables(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
     let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
     gfa_sql = util::simple_placeholder(&gfa_sql, "prefix", prefix);
     db.execute_batch(&gfa_sql)?;
-
-    if rgfa {
-        let mut rgfa_sql = include_str!("schema/rGFA1.sql").to_string();
-        rgfa_sql = util::simple_placeholder(&rgfa_sql, "prefix", prefix);
-        db.execute_batch(&rgfa_sql)?;
-        info!("created [r]GFA1 tables");
-    } else {
-        info!("created GFA1 tables");
-    }
-
+    info!("created GFA1 tables");
     Ok(())
 }
 
-pub fn create_indexes(db: &rusqlite::Connection, prefix: &str, rgfa: bool) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
     info!("indexing:");
-    create_indexes_exec(db, &include_str!("schema/GFA1.index.sql"), prefix)?;
 
-    if rgfa {
-        create_indexes_exec(db, &include_str!("schema/rGFA1.index.sql"), prefix)?;
-
-        let gri_sql = db.create_genomic_range_index_sql(
-            &format!("{}gfa1_reference", prefix),
-            "rid",
-            "position",
-            "position+length",
-        )?;
-        info!("\tGenomic Range Indexing ...");
-        db.execute_batch(&gri_sql)?;
-    }
-
-    info!("\tANALYZE ...");
-    db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
-
-    Ok(())
-}
-
-fn create_indexes_exec(db: &rusqlite::Connection, sql: &str, prefix: &str) -> Result<()> {
-    for index_spec in sql.split(";") {
+    let ddl = include_str!("schema/GFA1.index.sql");
+    for index_spec in ddl.split(";") {
         let mut index_sql = index_spec.trim().to_string();
         if !index_sql.is_empty() {
             index_sql = util::simple_placeholder(&index_sql, "prefix", prefix);
@@ -150,10 +129,24 @@ fn create_indexes_exec(db: &rusqlite::Connection, sql: &str, prefix: &str) -> Re
             db.execute_batch(&index_sql)?;
         }
     }
+
+    // add GRI for segment mappings
+    let gri_sql = db.create_genomic_range_index_sql(
+        &format!("{}gfa1_segment_mapping", prefix),
+        "refseq_name",
+        "refseq_begin",
+        "refseq_end",
+    )?;
+    info!("\tGenomic Range Indexing ...");
+    db.execute_batch(&gri_sql)?;
+
+    info!("\tANALYZE ...");
+    db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
+
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> Result<()> {
+fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
@@ -165,13 +158,10 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
         "INSERT INTO {}gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)",
         prefix
     ))?;
-    let mut stmt_insert_rgfa = None;
-    if rgfa {
-        stmt_insert_rgfa = Some(txn.prepare(&format!(
-            "INSERT INTO {}gfa1_reference(segment_id,rid,position,length,rank) VALUES(?,?,?,?,?)",
-            prefix
-        ))?)
-    }
+    let mut stmt_insert_segment_mapping = txn.prepare(&format!(
+        "INSERT INTO {}temp.segment_mapping_hold(segment_id,refseq_name,refseq_begin,refseq_end) VALUES(?,?,?,?)",
+        prefix
+    ))?;
     let mut stmt_insert_path = txn.prepare(&format!(
         "INSERT INTO {}gfa1_path(path_id,name,tags_json) VALUES(?,?,?)",
         prefix
@@ -190,8 +180,8 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> R
                 tsv,
                 txn,
                 &mut stmt_insert_segment_meta,
+                &mut stmt_insert_segment_mapping,
                 &mut stmt_insert_segment_sequence,
-                stmt_insert_rgfa.as_mut(),
                 &mut segments_by_name,
             ),
             "L" => insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name),
@@ -214,8 +204,8 @@ fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
     stmt_meta: &mut Statement,
+    stmt_mapping: &mut Statement,
     stmt_sequence: &mut Statement,
-    maybe_stmt_rgfa: Option<&mut Statement>,
     segments_by_name: &mut HashMap<String, i64>,
 ) -> Result<()> {
     assert_eq!(tsv[0], "S");
@@ -232,8 +222,10 @@ fn insert_gfa1_segment(
     };
     let mut tags_json = prepare_tags_json(tsv, 3)?;
 
+    // remove tag LN:i if present because we'll keep a dedicated column for this info (make sure
+    // it's consistent)
     let ln_tag = tags_json.remove("LN:i").map(|j| j.as_i64()).flatten();
-    let sequence_len = match (maybe_sequence, ln_tag) {
+    let maybe_sequence_len = match (maybe_sequence, ln_tag) {
         (Some(seq), Some(lni)) if lni != (seq.len() as i64) => {
             invalid_gfa!(
                 "segment with inconsistent sequence length and LN tag: {}",
@@ -245,26 +237,8 @@ fn insert_gfa1_segment(
         (None, None) => None,
     };
 
-    let rgfa_tags = if maybe_stmt_rgfa.is_some() {
-        let sn = tags_json
-            .remove("SN:Z")
-            .map(|j| j.as_str().map(|s| String::from(s)))
-            .flatten();
-        let so = tags_json.remove("SO:i").map(|j| j.as_i64()).flatten();
-        let sr = tags_json.remove("SR:i").map(|j| j.as_i64()).flatten();
-        if sn.is_none() || so.is_none() || sr.is_none() || sequence_len.is_none() {
-            invalid_gfa!(
-                "segment missing required rGFA tags (SN:Z SO:i SR:i LN:i): {}",
-                tsv[1]
-            )
-        }
-        Some((sn.unwrap(), so.unwrap(), sr.unwrap()))
-    } else {
-        None
-    };
-
     let tags_json_text = tags_json.dump();
-    stmt_meta.execute(params![rowid, name, sequence_len, tags_json_text])?;
+    stmt_meta.execute(params![rowid, name, maybe_sequence_len, tags_json_text])?;
     let rowid_actual = txn.last_insert_rowid();
 
     if let Some(nm) = name {
@@ -273,9 +247,23 @@ fn insert_gfa1_segment(
     if let Some(seq) = maybe_sequence {
         stmt_sequence.execute(params![rowid_actual, seq])?;
     }
-    if let Some(stmt_rgfa) = maybe_stmt_rgfa {
-        let (sn, so, sr) = rgfa_tags.unwrap();
-        stmt_rgfa.execute(params!(rowid_actual, sn, so, sequence_len.unwrap(), sr))?;
+
+    // add a mapping from rGFA tags, if present
+    let sn = tags_json
+        .get("SN:Z")
+        .map(|j| j.as_str().map(|s| String::from(s)))
+        .flatten();
+    let so = tags_json.get("SO:i").map(|j| j.as_i64()).flatten();
+    match (sn, so, maybe_sequence_len) {
+        (Some(refseq_name), Some(refseq_begin), Some(sequence_len)) => {
+            stmt_mapping.execute(params!(
+                rowid_actual,
+                refseq_name,
+                refseq_begin,
+                refseq_begin + sequence_len,
+            ))?;
+        }
+        _ => (),
     }
 
     Ok(())

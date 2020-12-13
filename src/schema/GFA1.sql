@@ -22,6 +22,18 @@ CREATE VIEW {{prefix}}gfa1_segment AS
         {{prefix}}gfa1_segment_meta LEFT JOIN {{prefix}}gfa1_segment_sequence
         USING (segment_id);
 
+-- gfabase extension: "mappings" of segments to linear reference sequence coordinates, suitable for
+-- Genomic Range Indexing
+CREATE TABLE {{prefix}}gfa1_segment_mapping(
+    segment_id INTEGER NOT NULL         -- nb: one segment may have multiple mappings
+        REFERENCES {{prefix}}gfa1_segment_meta(segment_id),
+    refseq_name TEXT NOT NULL, -- COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
+    refseq_begin INTEGER NOT NULL,      -- zero-based begin of associated range
+    refseq_end INTEGER NOT NULL,        -- end (exclusive) of associated range
+    cigar TEXT,                         -- alignment of segment sequence to associated refseq range, if known
+    tags_json TEXT                      -- currently unused
+);
+
 -- Link
 CREATE TABLE {{prefix}}gfa1_link(
     from_segment INTEGER NOT NULL
