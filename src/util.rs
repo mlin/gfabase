@@ -13,6 +13,9 @@ pub enum Error {
     #[error(transparent)]
     DbError(#[from] rusqlite::Error),
 
+    #[error("[Bad command] {0}")]
+    BadCommand(String),
+
     #[error("[Invalid GFA input] {0}")]
     InvalidGfa(String),
 
@@ -23,8 +26,8 @@ pub enum Error {
         rowid: i64,
     },
 
-    #[error("[Bad command] {0}")]
-    BadCommand(String),
+    #[error("Empty .gfab")]
+    EmptyGfab,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

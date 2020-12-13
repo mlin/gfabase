@@ -36,6 +36,7 @@ pub struct Opts {
 
 pub fn main(opts: &Opts) -> Result<()> {
     let prefix = "";
+    let sub_segment_count: i64;
 
     if opts.outfile == "" || opts.outfile == "-" {
         bad_command!("missing required outfile argument");
@@ -125,12 +126,24 @@ pub fn main(opts: &Opts) -> Result<()> {
             txn.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
         }
 
+        sub_segment_count =
+            txn.query_row("SELECT count(1) FROM temp.sub_segments", NO_PARAMS, |row| {
+                row.get(0)
+            })?;
+
         load::create_tables(&txn, prefix)?;
 
-        info!("copying segments & links...");
-        let mut sub_sql = include_str!("query/sub.sql").to_string();
-        sub_sql = util::simple_placeholder(&sub_sql, "prefix", prefix);
-        txn.execute_batch(&sub_sql)?;
+        if sub_segment_count == 0 {
+            warn!("no segments matched the command-line criteria")
+        } else {
+            info!(
+                "copying {} segments and their associated links & paths...",
+                sub_segment_count
+            );
+            let mut sub_sql = include_str!("query/sub.sql").to_string();
+            sub_sql = util::simple_placeholder(&sub_sql, "prefix", prefix);
+            txn.execute_batch(&sub_sql)?;
+        }
 
         load::create_indexes(&txn, prefix)?;
 
@@ -140,6 +153,9 @@ pub fn main(opts: &Opts) -> Result<()> {
 
     load::summary(&db)?;
     db.close().map_err(|(_, e)| e)?;
+    if sub_segment_count == 0 {
+        return Err(util::Error::EmptyGfab);
+    }
     info!("🗹 done");
     Ok(())
 }

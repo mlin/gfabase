@@ -24,6 +24,7 @@ pub struct Opts {
 
 pub fn main(opts: &Opts) -> Result<()> {
     let prefix = "";
+    let records_processed;
 
     // formulate GenomicSQLite configuration JSON
     let mut db = new_db(&opts.gfab, opts.compress, 1024)?;
@@ -51,20 +52,24 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         info!("processing GFA1 records...");
-        insert_gfa1(&opts.gfa, &txn, prefix)?;
-        info!("writing segment metadata...");
-
-        // copy metadata as planned
-        txn.execute_batch(&format!(
-            "INSERT INTO {}gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
-                SELECT segment_id, name, sequence_length, tags_json
-                FROM temp.segment_meta_hold;
-             INSERT INTO {}gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
-                SELECT segment_id, refseq_name, refseq_begin, refseq_end
-                FROM temp.segment_mapping_hold ORDER BY segment_id",
-            prefix, prefix
-        ))?;
-        info!("insertions complete");
+        records_processed = insert_gfa1(&opts.gfa, &txn, prefix)?;
+        if records_processed == 0 {
+            warn!("no input records processed")
+        } else {
+            info!("processed {} GFA1 record(s)", records_processed);
+            info!("writing segment metadata...");
+            // copy metadata as planned
+            txn.execute_batch(&format!(
+                "INSERT INTO {}gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
+                    SELECT segment_id, name, sequence_length, tags_json
+                    FROM temp.segment_meta_hold;
+                INSERT INTO {}gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
+                    SELECT segment_id, refseq_name, refseq_begin, refseq_end
+                    FROM temp.segment_mapping_hold ORDER BY segment_id",
+                prefix, prefix
+            ))?;
+            info!("insertions complete");
+        }
 
         // indexing
         create_indexes(&txn, prefix)?;
@@ -76,8 +81,12 @@ pub fn main(opts: &Opts) -> Result<()> {
 
     summary(&db)?;
     db.close().map_err(|(_, e)| e)?;
-    info!("🗹 done");
-    Ok(())
+    if records_processed > 0 {
+        info!("🗹 done");
+        Ok(())
+    } else {
+        Err(util::Error::EmptyGfab)
+    }
 }
 
 pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusqlite::Connection> {
@@ -146,7 +155,7 @@ pub fn create_indexes(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
+fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<usize> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
@@ -172,32 +181,43 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
     ))?;
 
     let mut segments_by_name = HashMap::new();
+    let mut records: usize = 0;
 
     // closure to process one record
     let dispatch = |tsv: &Vec<&str>| -> Result<()> {
         match tsv[0] {
-            "S" => insert_gfa1_segment(
-                tsv,
-                txn,
-                &mut stmt_insert_segment_meta,
-                &mut stmt_insert_segment_mapping,
-                &mut stmt_insert_segment_sequence,
-                &mut segments_by_name,
-            ),
-            "L" => insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name),
-            "P" => insert_gfa1_path(
-                tsv,
-                txn,
-                &mut stmt_insert_path,
-                &mut stmt_insert_path_element,
-                &segments_by_name,
-            ),
+            "S" => {
+                records += 1;
+                insert_gfa1_segment(
+                    tsv,
+                    txn,
+                    &mut stmt_insert_segment_meta,
+                    &mut stmt_insert_segment_mapping,
+                    &mut stmt_insert_segment_sequence,
+                    &mut segments_by_name,
+                )
+            }
+            "L" => {
+                records += 1;
+                insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name)
+            }
+            "P" => {
+                records += 1;
+                insert_gfa1_path(
+                    tsv,
+                    txn,
+                    &mut stmt_insert_path,
+                    &mut stmt_insert_path_element,
+                    &segments_by_name,
+                )
+            }
             _ => invalid_gfa!("GFA record type {} not yet supported", tsv[0]),
         }
     };
 
     // iterate tsv records
-    util::iter_tsv_no_comments(dispatch, filename, Some('#' as u8))
+    util::iter_tsv_no_comments(dispatch, filename, Some('#' as u8))?;
+    Ok(records)
 }
 
 fn insert_gfa1_segment(

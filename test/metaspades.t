@@ -7,7 +7,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 7
+plan tests 8
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -39,5 +39,9 @@ is "$roundtrip_link_digest" "$link_digest" "links roundtrip identical"
 path_digest=$(cat "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" | grep "^P" | cut -f1-4 | sort -V | sha256sum)
 roundtrip_path_digest=$(cat "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.roundtrip.gfa" | grep "^P" | cut -f1-4 | sort -V | sha256sum)
 is "$roundtrip_path_digest" "$path_digest" "paths roundtrip identical"
+
+# test behavior w/ empty input
+gfabase load /dev/null "${TMPDIR}/empty.gfab"
+is "$?" "3" "gfabase load empty"
 
 rm -rf "$TMPDIR"

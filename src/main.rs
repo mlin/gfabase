@@ -3,6 +3,7 @@ use clap::Clap;
 extern crate fern;
 extern crate log;
 use fern::colors::{Color, ColoredLevelConfig};
+use log::error;
 
 mod load;
 mod sub;
@@ -54,10 +55,17 @@ fn main() -> Result<()> {
         .apply()?;
     let opts = Opts::parse();
 
-    match opts.subcmd {
-        SubCommand::Version => Ok(version::main()?),
-        SubCommand::Load(subopts) => Ok(load::main(&subopts)?),
-        SubCommand::View(subopts) => Ok(view::main(&subopts)?),
-        SubCommand::Sub(subopts) => Ok(sub::main(&subopts)?),
+    let rslt = match opts.subcmd {
+        SubCommand::Version => version::main(),
+        SubCommand::Load(subopts) => load::main(&subopts),
+        SubCommand::View(subopts) => view::main(&subopts),
+        SubCommand::Sub(subopts) => sub::main(&subopts),
+    };
+
+    if let Err(util::Error::EmptyGfab) = rslt {
+        error!("empty .gfab; exiting with code 3");
+        std::process::exit(3)
     }
+
+    Ok(rslt?)
 }
