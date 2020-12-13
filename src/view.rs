@@ -134,7 +134,7 @@ fn write_paths(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
     ))?;
     let mut elements_query = db.prepare(&format!(
         "SELECT
-            coalesce(name, cast(segment_id AS TEXT)) AS segment_name, reverse, cigar_vs_next
+            coalesce(name, cast(segment_id AS TEXT)) AS segment_name, reverse, cigar_vs_previous
          FROM {}gfa1_path_element LEFT JOIN {}gfa1_segment_meta USING(segment_id)
          WHERE path_id=? ORDER BY path_id, ordinal",
         prefix, prefix

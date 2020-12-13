@@ -167,7 +167,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<()> {
         prefix
     ))?;
     let mut stmt_insert_path_element = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_next) VALUES(?,?,?,?,?)",
+        "INSERT INTO {}gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_previous) VALUES(?,?,?,?,?)",
         prefix
     ))?;
 
@@ -354,7 +354,7 @@ fn insert_gfa1_path(
             segments_by_name,
         )?;
         let cigar = match (&maybe_cigars, ord) {
-            (Some(cigars), i) if i < segs.len() - 1 => Some(cigars[i]),
+            (Some(cigars), i) if i > 0 => Some(cigars[i - 1]),
             _ => None,
         };
         stmt_ele.execute(params![
