@@ -99,19 +99,22 @@ pub fn main(opts: &Opts) -> Result<()> {
                  WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
             prefix, prefix
         ))?;
-        let n_unknown: i64 = txn.query_row(
-            "SELECT count(1) FROM temp.unknown_segments",
-            NO_PARAMS,
-            |row| row.get(0),
-        )?;
-        if n_unknown > 0 {
-            // TODO: error! log up to 10 of the missing segment IDs
-            bad_command!(
-                "{} of {} desired segment IDs aren't present in {}",
-                n_unknown,
-                opts.segments.len(),
-                &opts.gfab
-            );
+        {
+            let mut missing_examples = Vec::new();
+            let mut missing_examples_stmt =
+                txn.prepare("SELECT segment_id FROM temp.unknown_segments LIMIT 10")?;
+            let mut missing_examples_cursor = missing_examples_stmt.query(NO_PARAMS)?;
+            while let Some(row) = missing_examples_cursor.next()? {
+                let missing_segment_id: i64 = row.get(0)?;
+                missing_examples.push(missing_segment_id.to_string())
+            }
+            if missing_examples.len() > 0 {
+                bad_command!(
+                    "desired segment IDs aren't present in {} such as: {}",
+                    &opts.gfab,
+                    missing_examples.join(" ")
+                );
+            }
         }
 
         if opts.connected {
@@ -137,7 +140,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             warn!("no segments matched the command-line criteria")
         } else {
             info!(
-                "copying {} segments and their associated links & paths...",
+                "copying {} segments (and links & paths touching only those segments)",
                 sub_segment_count
             );
             let mut sub_sql = include_str!("query/sub.sql").to_string();

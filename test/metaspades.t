@@ -7,7 +7,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 8
+plan tests 11
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -39,6 +39,15 @@ is "$roundtrip_link_digest" "$link_digest" "links roundtrip identical"
 path_digest=$(cat "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" | grep "^P" | cut -f1-4 | sort -V | sha256sum)
 roundtrip_path_digest=$(cat "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.roundtrip.gfa" | grep "^P" | cut -f1-4 | sort -V | sha256sum)
 is "$roundtrip_path_digest" "$path_digest" "paths roundtrip identical"
+
+# sub two scaffolds and make sure we get those Paths
+time gfabase sub "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" "${TMPDIR}/sub.gfab" \
+    20412 106423 14364 133587 133589 17280
+is "$?" "0" "sub scaffolds"
+gfabase view "${TMPDIR}/sub.gfab" | grep NODE_2_length_747618_cov_15.708553_3
+is "$?" "0" "sub scaffold NODE_2_length_747618_cov_15.708553_3"
+gfabase view "${TMPDIR}/sub.gfab" | grep NODE_2_length_747618_cov_15.708553_4
+is "$?" "0" "sub scaffold grep NODE_2_length_747618_cov_15.708553_4"
 
 # test behavior w/ empty input
 gfabase load /dev/null "${TMPDIR}/empty.gfab"
