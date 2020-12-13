@@ -53,7 +53,7 @@ fn write_segments(
     let segments_query_sql = if !rgfa {
         format!(
             "SELECT
-                segment_id, coalesce(name, cast(segment_id AS TEXT)),
+                segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
                 coalesce(tags_json, '{{}}'), sequence
              FROM {}gfa1_segment",
             prefix
@@ -62,7 +62,7 @@ fn write_segments(
         // rGFA: also get SN/SO/SR tag values
         format!(
             "SELECT
-                segment_id, coalesce(name, cast(segment_id AS TEXT)),
+                segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
                 coalesce(tags_json, '{{}}'), sequence, rid, position, rank
              FROM {}gfa1_segment LEFT JOIN {}gfa1_reference USING (segment_id)",
             prefix, prefix
@@ -73,17 +73,21 @@ fn write_segments(
     while let Some(segrow) = segments_cursor.next()? {
         let rowid: i64 = segrow.get(0)?;
         let name: String = segrow.get(1)?;
-        let tags_json: String = segrow.get(2)?;
-        let sequence: Option<String> = segrow.get(3)?;
+        let maybe_sequence_length: Option<i64> = segrow.get(2)?;
+        let tags_json: String = segrow.get(3)?;
+        let sequence: Option<String> = segrow.get(4)?;
         writer.write_fmt(format_args!(
             "S\t{}\t{}",
             name,
             sequence.as_ref().map(String::as_str).unwrap_or("*")
         ))?;
+        if let Some(sequence_length) = maybe_sequence_length {
+            writer.write_fmt(format_args!("\tLN:i:{}", sequence_length))?;
+        }
         if rgfa {
-            let sn: String = segrow.get(4)?;
-            let so: i64 = segrow.get(5)?;
-            let sr: i64 = segrow.get(6)?; // TODO: resolve to name
+            let sn: String = segrow.get(5)?;
+            let so: i64 = segrow.get(6)?;
+            let sr: i64 = segrow.get(7)?;
             writer.write_fmt(format_args!("\tSN:Z:{}\tSO:i:{}\tSR:i:{}", sn, so, sr))?;
         }
         write_tags(

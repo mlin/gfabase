@@ -8,6 +8,8 @@ Effectively, .gfab is a new GFA-equivalent format with built-in compression and 
 
 ### Quick start
 
+![CI](https://github.com/mlin/gfabase/workflows/CI/badge.svg?branch=main)
+
 [Install rust toolchain](https://rustup.rs/) and:
 
 ```bash

@@ -40,15 +40,20 @@ pub fn main(opts: &Opts) -> Result<()> {
         // add a temp table to hold segment metadata, which we'll copy into the main db file after
         // writing all the segment sequences; this ensures the metadata is stored ~contiguously
         // instead of interspersed among the (typically much larger) sequence data.
-        txn.execute_batch("CREATE TABLE temp.segment_meta_hold(segment_id INTEGER PRIMARY KEY, name TEXT, tags_json TEXT)")?;
+        txn.execute_batch(
+            "CREATE TABLE temp.segment_meta_hold(
+                segment_id INTEGER PRIMARY KEY, name TEXT,
+                sequence_length INTEGER, tags_json TEXT
+            )",
+        )?;
 
         // intake GFA records
         info!("processing GFA1 records...");
         insert_gfa1(&opts.gfa, &txn, prefix, opts.rgfa)?;
         info!("writing segment metadata...");
         txn.execute_batch(&format!(
-            "INSERT INTO {}gfa1_segment_meta(segment_id, name, tags_json)
-             SELECT segment_id, name, tags_json FROM temp.segment_meta_hold",
+            "INSERT INTO {}gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
+             SELECT segment_id, name, sequence_length, tags_json FROM temp.segment_meta_hold",
             prefix
         ))?;
         info!("insertions complete");
@@ -151,7 +156,7 @@ fn create_indexes_exec(db: &rusqlite::Connection, sql: &str, prefix: &str) -> Re
 fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str, rgfa: bool) -> Result<()> {
     // prepared statements
     let mut stmt_insert_segment_meta =
-        txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,tags_json) VALUES(?,?,?)")?;
+        txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
     let mut stmt_insert_segment_sequence = txn.prepare(&format!(
         "INSERT INTO {}gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))",
         prefix
@@ -227,7 +232,7 @@ fn insert_gfa1_segment(
     };
     let mut tags_json = prepare_tags_json(tsv, 3)?;
 
-    let ln_tag = tags_json.get("LN:i").map(|j| j.as_i64()).flatten();
+    let ln_tag = tags_json.remove("LN:i").map(|j| j.as_i64()).flatten();
     let sequence_len = match (maybe_sequence, ln_tag) {
         (Some(seq), Some(lni)) if lni != (seq.len() as i64) => {
             invalid_gfa!(
@@ -235,20 +240,21 @@ fn insert_gfa1_segment(
                 tsv[1]
             )
         }
-        (Some(seq), _) => seq.len() as i64,
-        (None, Some(lni)) => lni,
-        (None, None) => 0,
+        (Some(seq), _) => Some(seq.len() as i64),
+        (None, Some(lni)) => Some(lni),
+        (None, None) => None,
     };
 
     let rgfa_tags = if maybe_stmt_rgfa.is_some() {
         let sn = tags_json
             .remove("SN:Z")
-            .map(|j| String::from(j.as_str().unwrap()));
-        let so = tags_json.remove("SO:i").map(|j| j.as_i64().unwrap());
-        let sr = tags_json.remove("SR:i").map(|j| j.as_i64().unwrap());
-        if sn.is_none() || so.is_none() || sr.is_none() {
+            .map(|j| j.as_str().map(|s| String::from(s)))
+            .flatten();
+        let so = tags_json.remove("SO:i").map(|j| j.as_i64()).flatten();
+        let sr = tags_json.remove("SR:i").map(|j| j.as_i64()).flatten();
+        if sn.is_none() || so.is_none() || sr.is_none() || sequence_len.is_none() {
             invalid_gfa!(
-                "segment missing required rGFA tags (SN:Z SO:i SR:i): {}",
+                "segment missing required rGFA tags (SN:Z SO:i SR:i LN:i): {}",
                 tsv[1]
             )
         }
@@ -258,7 +264,7 @@ fn insert_gfa1_segment(
     };
 
     let tags_json_text = tags_json.dump();
-    stmt_meta.execute(params![rowid, name, tags_json_text])?;
+    stmt_meta.execute(params![rowid, name, sequence_len, tags_json_text])?;
     let rowid_actual = txn.last_insert_rowid();
 
     if let Some(nm) = name {
@@ -269,7 +275,7 @@ fn insert_gfa1_segment(
     }
     if let Some(stmt_rgfa) = maybe_stmt_rgfa {
         let (sn, so, sr) = rgfa_tags.unwrap();
-        stmt_rgfa.execute(params!(rowid_actual, sn, so, sequence_len, sr))?;
+        stmt_rgfa.execute(params!(rowid_actual, sn, so, sequence_len.unwrap(), sr))?;
     }
 
     Ok(())

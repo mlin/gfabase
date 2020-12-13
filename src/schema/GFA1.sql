@@ -2,6 +2,7 @@
 CREATE TABLE {{prefix}}gfa1_segment_meta(
     segment_id INTEGER NOT NULL PRIMARY KEY,
     name TEXT,                             -- if distinct from ID, otherwise NULL
+    sequence_length INTEGER,               -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
     tags_json TEXT
 );
 
@@ -14,7 +15,9 @@ CREATE TABLE {{prefix}}gfa1_segment_sequence(
 
 -- Convenience: view joining segment_meta & segment_sequence
 CREATE VIEW {{prefix}}gfa1_segment AS
-    SELECT segment_id, name, tags_json, twobit_dna(sequence_twobit) AS sequence
+    SELECT
+        segment_id, name, sequence_length, tags_json,
+        twobit_dna(sequence_twobit) AS sequence
     FROM
         {{prefix}}gfa1_segment_meta LEFT JOIN {{prefix}}gfa1_segment_sequence
         USING (segment_id);
