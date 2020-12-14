@@ -3,7 +3,7 @@ use genomicsqlite::ConnectionMethods;
 use json::object;
 use log::{debug, error, info, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::invalid_gfa;
 use crate::util;
@@ -184,6 +184,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<usize>
     let mut records: usize = 0;
 
     // closure to process one record
+    let mut other_record_types = HashSet::new();
     let dispatch = |tsv: &Vec<&str>| -> Result<()> {
         match tsv[0] {
             "S" => {
@@ -211,7 +212,16 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<usize>
                     &segments_by_name,
                 )
             }
-            _ => invalid_gfa!("GFA record type {} not yet supported", tsv[0]),
+            "C" => {
+                panic!("gfabase doesn't yet support GFA Containment records; please bug the maintainers");
+            }
+            other => {
+                if !other_record_types.contains(other) {
+                    warn!("ignoring record(s) with RecordType = {}", other);
+                    other_record_types.insert(String::from(other));
+                }
+                Ok(())
+            }
         }
     };
 

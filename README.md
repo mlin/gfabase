@@ -2,9 +2,9 @@
 
 ### WIP for show &amp; tell, don't use yet
 
-`gfabase` is a command-line tool for random-access storage of [Graphical Fragment Assembly (GFA)](https://github.com/GFA-spec/GFA-spec) data. It imports a .gfa file into a compressed **.gfab** file, from which it can later access subgraphs quickly (without reading the whole .gfab). It also has specialized features for [reference GFA (rGFA)](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md), e.g. accessing the subgraph connected to a linear coordinate range.
+`gfabase` is a command-line tool for random-access storage of [Graphical Fragment Assembly (GFA)](https://github.com/GFA-spec/GFA-spec) data. It imports a .gfa file into a compressed **.gfab** file, from which it can later access subgraphs quickly (without reading the whole .gfab). In addition to access by segment names and links, each .gfab segment may be annotated with 1+ coordinate ranges on linear reference sequences. This supports fast access to subgraphs associated with linear coordinate ranges, e.g. to help navigate assemblies or [rGFA reference graphs](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md).
 
-Effectively, .gfab is a new GFA-equivalent format with built-in compression and indexing. It is in fact a SQLite (+ [Genomics Extension](https://github.com/mlin/GenomicSQLite)) database that `gfabase` populates with a [GFA-like schema](src/schema/GFA1.sql) to [query with SQL](src/query). Programmers have the option to access .gfab files directly using SQLite (+ Genomics Extension), without requiring `gfabase` nor even a low-level parser for .gfa/.gfab.
+Effectively, .gfab is a new GFA-equivalent format with built-in compression and indexing. It is in fact a SQLite (+ [Genomics Extension](https://github.com/mlin/GenomicSQLite)) database that `gfabase` populates with a [GFA-like schema](src/schema/GFA1.sql). Programmers have the option to access .gfab files directly using SQLite (+ Genomics Extension), without requiring `gfabase` nor even a low-level parser for .gfa/.gfab.
 
 ### Quick start
 
