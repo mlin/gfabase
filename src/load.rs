@@ -23,11 +23,14 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    let records_processed;
+    if !opts.gfab.ends_with(".gfab") {
+        warn!("output filename should end in .gfab");
+    }
 
     // formulate GenomicSQLite configuration JSON
     let mut db = new_db(&opts.gfab, opts.compress, 1024)?;
 
+    let records_processed;
     {
         // open transaction & apply schema
         let txn = db.transaction()?;

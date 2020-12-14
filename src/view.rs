@@ -1,5 +1,6 @@
 use clap::Clap;
 use json::JsonValue;
+use log::warn;
 use rusqlite::{params, OpenFlags, NO_PARAMS};
 use std::{fs, io};
 
@@ -27,25 +28,40 @@ pub fn main(opts: &Opts) -> Result<()> {
     )?;
 
     // open output writer
-    let mut writer_box: Box<dyn io::Write> = match opts.gfa.as_ref().map(String::as_str) {
-        None | Some("-") | Some("") => Box::new(io::BufWriter::new(io::stdout())),
-        Some(p) => Box::new(io::BufWriter::new(fs::File::create(p)?)),
-    };
-    let writer = &mut *writer_box;
-    write_segments(&db, writer)?;
-    write_links(&db, writer)?;
-    write_paths(&db, writer)?;
-    writer.flush()?;
+    let mut writer_box = writer(opts.gfa.as_ref().map(String::as_str))?;
+    let out = &mut *writer_box;
+    write_segments(&db, "", out)?;
+    write_links(&db, "", out)?;
+    write_paths(&db, "", out)?;
+    out.flush()?;
 
     Ok(())
 }
 
-fn write_segments(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
-    let segments_query_sql = "SELECT
+pub fn writer(gfa_filename: Option<&str>) -> Result<Box<dyn io::Write>> {
+    match gfa_filename {
+        None | Some("-") | Some("") => Ok(Box::new(io::BufWriter::new(io::stdout()))),
+        Some(p) => {
+            if !p.ends_with(".gfa") {
+                warn!("output filename should end with .gfa")
+            }
+            Ok(Box::new(io::BufWriter::new(fs::File::create(p)?)))
+        }
+    }
+}
+
+pub fn write_segments(
+    db: &rusqlite::Connection,
+    where_clause: &str,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
+    let segments_query_sql = String::from(
+        "SELECT
             segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
             coalesce(tags_json, '{}'), sequence
-            FROM gfa1_segment";
-    let mut segments_query = db.prepare(segments_query_sql)?;
+            FROM gfa1_segment ",
+    ) + where_clause;
+    let mut segments_query = db.prepare(&segments_query_sql)?;
     let mut segments_cursor = segments_query.query(NO_PARAMS)?;
     while let Some(segrow) = segments_cursor.next()? {
         let rowid: i64 = segrow.get(0)?;
@@ -67,8 +83,12 @@ fn write_segments(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Resu
     Ok(())
 }
 
-fn write_links(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
-    let mut links_query = db.prepare(
+pub fn write_links(
+    db: &rusqlite::Connection,
+    where_clause: &str,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
+    let links_query_sql = format!(
         // this two-layer join resolves the two segment IDs to names (if any)
         "SELECT
             link_id, from_segment_name, from_reverse,
@@ -79,12 +99,15 @@ fn write_links(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<
                 gfa1_link._rowid_ AS link_id,
                 coalesce(gfa1_segment_meta.name, cast(from_segment AS TEXT)) AS from_segment_name,
                 from_reverse, to_segment, to_reverse, coalesce(cigar, '*') AS cigar,
-                coalesce(gfa1_link.tags_json, '{}') AS link_tags_json
+                coalesce(gfa1_link.tags_json, '{{}}') AS link_tags_json
             FROM
                 gfa1_link LEFT JOIN gfa1_segment_meta ON from_segment = segment_id
+            {}
             ORDER BY from_segment, to_segment)
             LEFT JOIN gfa1_segment_meta ON to_segment = segment_id",
-    )?;
+        where_clause
+    );
+    let mut links_query = db.prepare(&links_query_sql)?;
     let mut links_cursor = links_query.query(NO_PARAMS)?;
     while let Some(linkrow) = links_cursor.next()? {
         let link_id: i64 = linkrow.get(0)?;
@@ -108,11 +131,17 @@ fn write_links(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<
     Ok(())
 }
 
-fn write_paths(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
-    let mut paths_query = db.prepare(
-        "SELECT path_id, coalesce(name, cast(path_id AS TEXT)), coalesce(tags_json, '{}')
-         FROM gfa1_path ORDER BY path_id",
-    )?;
+pub fn write_paths(
+    db: &rusqlite::Connection,
+    where_clause: &str,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
+    let paths_query_sql = format!(
+        "SELECT path_id, coalesce(name, cast(path_id AS TEXT)), coalesce(tags_json, '{{}}')
+         FROM gfa1_path {} ORDER BY path_id",
+        where_clause
+    );
+    let mut paths_query = db.prepare(&paths_query_sql)?;
     let mut elements_query = db.prepare(
         "SELECT
             coalesce(name, cast(segment_id AS TEXT)) AS segment_name, reverse, cigar_vs_previous

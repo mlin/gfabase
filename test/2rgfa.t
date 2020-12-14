@@ -11,7 +11,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 10
+plan tests 12
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -56,5 +56,13 @@ gfabase sub \
     chr22:1-999999999 --reference --connected
 is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l)" "3319" "chr22-connected segments"
 is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l)" "4795" "chr22-connected links"
+
+# sub --view to stream GFA directly
+gfabase sub --view \
+    "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
+    chr22:1-999999999 --reference --connected \
+    > "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa"
+is "$(grep "^S" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "3319" "chr22-connected segments --view"
+is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "4795" "chr22-connected links --view"
 
 rm -rf "$TMPDIR"

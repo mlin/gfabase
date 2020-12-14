@@ -40,4 +40,4 @@ INSERT INTO gfa1_path_element(path_id, ordinal, segment_id, reverse, cigar_vs_pr
     SELECT path_id, ordinal, segment_id, reverse, cigar_vs_previous FROM input.gfa1_path_element
     WHERE path_id IN temp.sub_paths;
 
-DROP TABLE temp.sub_paths;
+--DROP TABLE temp.sub_paths;

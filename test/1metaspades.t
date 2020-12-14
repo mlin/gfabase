@@ -7,7 +7,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 11
+plan tests 13
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -48,6 +48,12 @@ gfabase view "${TMPDIR}/sub.gfab" | grep NODE_2_length_747618_cov_15.708553_3
 is "$?" "0" "sub scaffold NODE_2_length_747618_cov_15.708553_3"
 gfabase view "${TMPDIR}/sub.gfab" | grep NODE_2_length_747618_cov_15.708553_4
 is "$?" "0" "sub scaffold grep NODE_2_length_747618_cov_15.708553_4"
+
+time gfabase sub --view "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" - \
+    20412 106423 14364 133587 133589 17280 > "${TMPDIR}/sub.gfa"
+is "$?" "0" "sub --view scaffolds"
+grep NODE_2_length_747618_cov_15.708553_3 "${TMPDIR}/sub.gfa"
+is "$?" "0" "sub --view scaffold NODE_2_length_747618_cov_15.708553_3"
 
 # test behavior w/ empty input
 gfabase load /dev/null "${TMPDIR}/empty.gfab"
