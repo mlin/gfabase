@@ -1,8 +1,7 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
-use json::object;
-use log::{debug, error, info, warn};
-use rusqlite::{params, OpenFlags, Statement, NO_PARAMS};
+use log::{debug, info, warn};
+use rusqlite::{params, NO_PARAMS};
 
 use crate::util::Result;
 use crate::{bad_command, load, util, view};
@@ -51,7 +50,6 @@ pub fn main(opts: &Opts) -> Result<()> {
     let mut dbopts_in = json::object::Object::new();
     dbopts_in.insert("immutable", json::JsonValue::from(true));
     let attach_sql = db.genomicsqlite_attach_sql(&opts.gfab, "input", &dbopts_in)?;
-    debug!("{}", attach_sql);
     db.execute_batch(&attach_sql)?;
 
     {
@@ -118,7 +116,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             // sub_segments = connected components including start_segments
             let connected_sql = include_str!("query/connected_old.sql").to_string()
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
-            info!("computing connected component(s)...");
+            debug!("computing connected component(s)...");
             txn.execute_batch(&connected_sql)?;
         } else {
             // sub_segments = start_segments
@@ -144,7 +142,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         load::create_indexes(&txn)?;
 
-        info!("flushing {} ...", &opts.outfile);
+        debug!("flushing {} ...", &opts.outfile);
         txn.commit()?
     }
 

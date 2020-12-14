@@ -13,7 +13,7 @@ aria2c -c -d /tmp -s 10 -x 10 --retry-wait 2 \
     ftp://ftp.dfci.harvard.edu/pub/hli/hifiasm/HG002-trio-v0.11/HG002-v0.11.dip.r_utg.gfa.gz
 is "$?" "0" "download HG002-v0.11.dip.r_utg.gfa.gz"
 
-gfabase="cargo run --release --"
+gfabase="cargo run --release -- --verbose"
 
 export TMPDIR=$(mktemp -d --tmpdir gfabase_hifiasm_test_XXXXXX)
 

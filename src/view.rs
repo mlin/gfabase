@@ -1,8 +1,6 @@
 use clap::Clap;
-use genomicsqlite::ConnectionMethods;
 use json::JsonValue;
-use log::{debug, error, info, warn};
-use rusqlite::{params, OpenFlags, Statement, NO_PARAMS};
+use rusqlite::{params, OpenFlags, NO_PARAMS};
 use std::{fs, io};
 
 use crate::util;

@@ -1,7 +1,7 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use json::object;
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::{HashMap, HashSet};
 
@@ -50,13 +50,13 @@ pub fn main(opts: &Opts) -> Result<()> {
         )?;
 
         // intake GFA records
-        info!("processing GFA1 records...");
+        debug!("processing GFA1 records...");
         records_processed = insert_gfa1(&opts.gfa, &txn)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
             info!("processed {} GFA1 record(s)", records_processed);
-            info!("writing segment metadata...");
+            debug!("writing segment metadata...");
             // copy metadata as planned
             txn.execute_batch(
                 "INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
@@ -66,14 +66,14 @@ pub fn main(opts: &Opts) -> Result<()> {
                     SELECT segment_id, refseq_name, refseq_begin, refseq_end
                     FROM temp.segment_mapping_hold ORDER BY segment_id",
             )?;
-            info!("insertions complete");
+            debug!("insertions complete");
         }
 
         // indexing
         create_indexes(&txn)?;
 
         // done
-        info!("flushing {} ...", &opts.gfab);
+        debug!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
 
@@ -87,14 +87,18 @@ pub fn main(opts: &Opts) -> Result<()> {
     }
 }
 
-pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusqlite::Connection> {
+pub fn new_db(
+    filename: &str,
+    compress: i8,
+    page_cache_mebibytes: i32,
+) -> Result<rusqlite::Connection> {
     // formulate GenomicSQLite configuration JSON
     let dbopts = match object! {
         unsafe_load: true,
         inner_page_KiB: 64,
         outer_page_KiB: 2,
         zstd_level: compress,
-        page_cache_MiB: page_cache_MiB
+        page_cache_MiB: page_cache_mebibytes
     } {
         json::JsonValue::Object(o) => o,
         _ => {
@@ -118,18 +122,18 @@ pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusql
 
 pub fn create_tables(db: &rusqlite::Connection) -> Result<()> {
     db.execute_batch(include_str!("schema/GFA1.sql"))?;
-    info!("created GFA1 tables");
+    debug!("created GFA1 tables");
     Ok(())
 }
 
 pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
-    info!("indexing:");
+    info!("indexing...");
 
     let ddl = include_str!("schema/GFA1.index.sql");
     for index_spec in ddl.split(";") {
         let index_sql = index_spec.trim();
         if !index_sql.is_empty() {
-            info!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
+            debug!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
             db.execute_batch(index_sql)?;
         }
     }
@@ -141,10 +145,10 @@ pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
         "refseq_begin",
         "refseq_end",
     )?;
-    info!("\tGenomic Range Indexing ...");
+    debug!("\tGenomic Range Indexing ...");
     db.execute_batch(&gri_sql)?;
 
-    info!("\tANALYZE ...");
+    debug!("\tANALYZE ...");
     db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
 
     Ok(())
@@ -452,7 +456,7 @@ fn prepare_tags_json(tsv: &Vec<&str>, offset: usize) -> Result<json::object::Obj
 }
 
 pub fn summary(db: &rusqlite::Connection) -> Result<()> {
-    info!("tables & row counts:");
+    debug!("tables & row counts:");
     let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
     let mut tables = stmt_tables.query(NO_PARAMS)?;
     while let Some(row) = tables.next()? {
@@ -462,7 +466,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
             NO_PARAMS,
             |ctr| ctr.get(0),
         )?;
-        info!("\t{}\t{}", table, ct);
+        debug!("\t{}\t{}", table, ct);
     }
     if let Some(e) = db
         .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {

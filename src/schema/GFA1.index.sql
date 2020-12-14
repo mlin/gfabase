@@ -17,4 +17,6 @@ CREATE INDEX gfa1_containment_contained_container ON
 CREATE UNIQUE INDEX gfa1_path_name ON
     gfa1_path(name) WHERE name IS NOT NULL;
 CREATE INDEX gfa1_path_segment ON
-    gfa1_path_element(segment_id);
+    gfa1_path_element(segment_id)
+
+-- Not shown: GenomicSQLite Genomic Range Index on gfa1_segment_mapping (added in code)

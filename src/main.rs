@@ -16,6 +16,14 @@ mod view;
 struct Opts {
     #[clap(subcommand)]
     subcmd: SubCommand,
+
+    /// log extra progress reports
+    #[clap(short, long)]
+    pub verbose: bool,
+
+    /// log errors only
+    #[clap(short, long)]
+    pub quiet: bool,
 }
 
 #[derive(Clap)]
@@ -34,9 +42,10 @@ enum SubCommand {
 }
 
 fn main() -> Result<()> {
+    let opts = Opts::parse();
     let t0 = std::time::Instant::now();
     let colors = ColoredLevelConfig::new()
-        .debug(Color::Blue)
+        .info(Color::Blue)
         .warn(Color::Yellow)
         .error(Color::BrightRed);
     let _logger = fern::Dispatch::new()
@@ -50,10 +59,15 @@ fn main() -> Result<()> {
                 message
             ))
         })
-        .level(log::LevelFilter::Debug)
+        .level(if opts.verbose {
+            log::LevelFilter::Debug
+        } else if opts.quiet {
+            log::LevelFilter::Error
+        } else {
+            log::LevelFilter::Info
+        })
         .chain(std::io::stderr())
         .apply()?;
-    let opts = Opts::parse();
 
     let rslt = match opts.subcmd {
         SubCommand::Version => version::main(),
