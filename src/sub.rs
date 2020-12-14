@@ -18,7 +18,11 @@ pub struct Opts {
     #[clap(long)]
     pub connected: bool,
 
-    /// <SEGMENT>s are reference ranges like chr7:1,234-5,678 to locate in rGFA
+    /// <SEGMENT>s are actually paths to get all segments of
+    #[clap(long)]
+    pub path: bool,
+
+    /// <SEGMENT>s are reference ranges like chr7:1,234-5,678 to locate in segment mappings
     #[clap(long)]
     pub reference: bool,
 
@@ -154,15 +158,24 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
         };
         let mut find_segment_by_name =
             db.prepare("SELECT segment_id FROM gfa1_segment_meta WHERE name=?")?;
+        let mut find_path_by_name = db.prepare("SELECT path_id FROM gfa1_path WHERE name=?")?;
+        let mut insert_path = db.prepare(
+            "INSERT OR REPLACE INTO temp.start_segments(segment_id)
+             SELECT segment_id FROM gfa1_path_element WHERE path_id=?",
+        )?;
         for segment in &opts.segments {
             if opts.reference {
                 if insert_segment.execute(params![segment])? < 1 {
                     bad_command!("no segments found overlapping {}", segment);
                 }
             } else if let Some(segment_id) = load::name_to_id(segment) {
-                insert_segment.execute(params![segment_id]).map(|_| ())?;
-                check_start_segments = true;
-            } else {
+                if !opts.path {
+                    insert_segment.execute(params![segment_id]).map(|_| ())?;
+                    check_start_segments = true;
+                } else if insert_path.execute(params![segment_id])? < 1 {
+                    bad_command!("unknown path {}", segment_id);
+                }
+            } else if !opts.path {
                 let maybe_segment_id: Option<i64> = find_segment_by_name
                     .query_row(params![segment], |row| row.get(0))
                     .optional()?;
@@ -170,6 +183,17 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                     insert_segment.execute(params![segment_id])?;
                 } else {
                     bad_command!("unknown segment {}", segment)
+                }
+            } else {
+                let maybe_path_id: Option<i64> = find_path_by_name
+                    .query_row(params![segment], |row| row.get(0))
+                    .optional()?;
+                let mut inserted = 0;
+                if let Some(path_id) = maybe_path_id {
+                    inserted = insert_path.execute(params![path_id])?;
+                }
+                if inserted == 0 {
+                    bad_command!("unknown path {}", segment)
                 }
             }
         }
