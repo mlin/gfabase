@@ -1,7 +1,7 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, warn};
-use rusqlite::{params, OpenFlags, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
 
 use crate::util::Result;
 use crate::{bad_command, load, util, view};
@@ -14,7 +14,7 @@ pub struct Opts {
     /// output filename
     pub outfile: String,
 
-    /// expand desired segment(s) to full connected component(s)
+    /// follow links from specified segment(s) to get full connected component(s)
     #[clap(long)]
     pub connected: bool,
 
@@ -22,7 +22,7 @@ pub struct Opts {
     #[clap(long)]
     pub reference: bool,
 
-    /// desired segment(s)
+    /// desired segment(s) or path(s)
     #[clap(name = "SEGMENT")]
     pub segments: Vec<String>,
 
@@ -135,6 +135,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
 // populate temp.sub_segments with the segment IDs of the desired subgraph
 fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<()> {
+    let mut check_start_segments = false;
     db.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
     {
         let mut insert_segment = if !opts.reference {
@@ -151,6 +152,8 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                         parse_genomic_range_end(?1))",
             )?
         };
+        let mut find_segment_by_name =
+            db.prepare("SELECT segment_id FROM gfa1_segment_meta WHERE name=?")?;
         for segment in &opts.segments {
             if opts.reference {
                 if insert_segment.execute(params![segment])? < 1 {
@@ -158,37 +161,46 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                 }
             } else if let Some(segment_id) = load::name_to_id(segment) {
                 insert_segment.execute(params![segment_id]).map(|_| ())?;
+                check_start_segments = true;
             } else {
-                // FIXME try to find by segment name
-                bad_command!("don't know what to do with {}", segment);
+                let maybe_segment_id: Option<i64> = find_segment_by_name
+                    .query_row(params![segment], |row| row.get(0))
+                    .optional()?;
+                if let Some(segment_id) = maybe_segment_id {
+                    insert_segment.execute(params![segment_id])?;
+                } else {
+                    bad_command!("unknown segment {}", segment)
+                }
             }
         }
     }
 
-    // check existence of all the specified segments
-    db.execute_batch(&format!(
-        "CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);
-         INSERT INTO temp.unknown_segments
-             SELECT temp.start_segments.segment_id AS segment_id
-             FROM temp.start_segments LEFT JOIN {}gfa1_segment_meta USING (segment_id)
-             WHERE {}gfa1_segment_meta.segment_id IS NULL",
-        input_schema, input_schema
-    ))?;
-    {
-        let mut missing_examples = Vec::new();
-        let mut missing_examples_stmt =
-            db.prepare("SELECT segment_id FROM temp.unknown_segments LIMIT 10")?;
-        let mut missing_examples_cursor = missing_examples_stmt.query(NO_PARAMS)?;
-        while let Some(row) = missing_examples_cursor.next()? {
-            let missing_segment_id: i64 = row.get(0)?;
-            missing_examples.push(missing_segment_id.to_string())
-        }
-        if missing_examples.len() > 0 {
-            bad_command!(
-                "desired segment IDs aren't present in {} such as: {}",
-                &opts.gfab,
-                missing_examples.join(" ")
-            );
+    if check_start_segments {
+        // check existence of all the specified segments
+        db.execute_batch(&format!(
+            "CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);
+            INSERT INTO temp.unknown_segments
+                SELECT temp.start_segments.segment_id AS segment_id
+                FROM temp.start_segments LEFT JOIN {}gfa1_segment_meta USING (segment_id)
+                WHERE {}gfa1_segment_meta.segment_id IS NULL",
+            input_schema, input_schema
+        ))?;
+        {
+            let mut missing_examples = Vec::new();
+            let mut missing_examples_stmt =
+                db.prepare("SELECT segment_id FROM temp.unknown_segments LIMIT 10")?;
+            let mut missing_examples_cursor = missing_examples_stmt.query(NO_PARAMS)?;
+            while let Some(row) = missing_examples_cursor.next()? {
+                let missing_segment_id: i64 = row.get(0)?;
+                missing_examples.push(missing_segment_id.to_string())
+            }
+            if missing_examples.len() > 0 {
+                bad_command!(
+                    "desired segment IDs aren't present in {} such as: {}",
+                    &opts.gfab,
+                    missing_examples.join(" ")
+                );
+            }
         }
     }
 
