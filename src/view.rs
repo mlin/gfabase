@@ -17,8 +17,6 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    let prefix = "";
-
     // formulate GenomicSQLite configuration JSON
     let mut dbopts = json::object::Object::new();
     dbopts.insert("immutable", json::JsonValue::from(true));
@@ -36,27 +34,20 @@ pub fn main(opts: &Opts) -> Result<()> {
         Some(p) => Box::new(io::BufWriter::new(fs::File::create(p)?)),
     };
     let writer = &mut *writer_box;
-    write_segments(&db, &prefix, writer)?;
-    write_links(&db, &prefix, writer)?;
-    write_paths(&db, &prefix, writer)?;
+    write_segments(&db, writer)?;
+    write_links(&db, writer)?;
+    write_paths(&db, writer)?;
     writer.flush()?;
 
     Ok(())
 }
 
-fn write_segments(
-    db: &rusqlite::Connection,
-    prefix: &str,
-    writer: &mut dyn io::Write,
-) -> Result<()> {
-    let segments_query_sql = format!(
-        "SELECT
+fn write_segments(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
+    let segments_query_sql = "SELECT
             segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
-            coalesce(tags_json, '{{}}'), sequence
-            FROM {}gfa1_segment",
-        prefix
-    );
-    let mut segments_query = db.prepare(&segments_query_sql)?;
+            coalesce(tags_json, '{}'), sequence
+            FROM gfa1_segment";
+    let mut segments_query = db.prepare(segments_query_sql)?;
     let mut segments_cursor = segments_query.query(NO_PARAMS)?;
     while let Some(segrow) = segments_cursor.next()? {
         let rowid: i64 = segrow.get(0)?;
@@ -72,36 +63,30 @@ fn write_segments(
         if let Some(sequence_length) = maybe_sequence_length {
             writer.write_fmt(format_args!("\tLN:i:{}", sequence_length))?;
         }
-        write_tags(
-            &format!("{}gfa1_segments_meta", prefix),
-            rowid,
-            &tags_json,
-            writer,
-        )?;
+        write_tags("gfa1_segments_meta", rowid, &tags_json, writer)?;
         writer.write(b"\n")?;
     }
     Ok(())
 }
 
-fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Write) -> Result<()> {
-    let link_table = &format!("{}gfa1_link", prefix);
-    let mut links_query = db.prepare(&format!(
+fn write_links(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
+    let mut links_query = db.prepare(
         // this two-layer join resolves the two segment IDs to names (if any)
         "SELECT
             link_id, from_segment_name, from_reverse,
-            coalesce({prefix}gfa1_segment_meta.name, cast(to_segment AS TEXT)) AS to_segment_name,
+            coalesce(gfa1_segment_meta.name, cast(to_segment AS TEXT)) AS to_segment_name,
             to_reverse, cigar, link_tags_json
         FROM
             (SELECT
-                {prefix}gfa1_link._rowid_ AS link_id,
-                coalesce({prefix}gfa1_segment_meta.name, cast(from_segment AS TEXT)) AS from_segment_name,
+                gfa1_link._rowid_ AS link_id,
+                coalesce(gfa1_segment_meta.name, cast(from_segment AS TEXT)) AS from_segment_name,
                 from_reverse, to_segment, to_reverse, coalesce(cigar, '*') AS cigar,
-                coalesce({prefix}gfa1_link.tags_json, '{{}}') AS link_tags_json
+                coalesce(gfa1_link.tags_json, '{}') AS link_tags_json
             FROM
-                {prefix}gfa1_link LEFT JOIN {prefix}gfa1_segment_meta ON from_segment = segment_id
+                gfa1_link LEFT JOIN gfa1_segment_meta ON from_segment = segment_id
             ORDER BY from_segment, to_segment)
-            LEFT JOIN {prefix}gfa1_segment_meta ON to_segment = segment_id",
-        prefix=prefix))?;
+            LEFT JOIN gfa1_segment_meta ON to_segment = segment_id",
+    )?;
     let mut links_cursor = links_query.query(NO_PARAMS)?;
     while let Some(linkrow) = links_cursor.next()? {
         let link_id: i64 = linkrow.get(0)?;
@@ -119,26 +104,23 @@ fn write_links(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
             if to_reverse == 0 { '+' } else { '-' },
             cigar
         ))?;
-        write_tags(&link_table, link_id, &tags_json, writer)?;
+        write_tags("gfa1_link", link_id, &tags_json, writer)?;
         writer.write(b"\n")?;
     }
     Ok(())
 }
 
-fn write_paths(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Write) -> Result<()> {
-    let path_table = format!("{}gfa1_path", prefix);
-    let mut paths_query = db.prepare(&format!(
-        "SELECT path_id, coalesce(name, cast(path_id AS TEXT)), coalesce(tags_json, '{{}}')
-         FROM {} ORDER BY path_id",
-        path_table
-    ))?;
-    let mut elements_query = db.prepare(&format!(
+fn write_paths(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
+    let mut paths_query = db.prepare(
+        "SELECT path_id, coalesce(name, cast(path_id AS TEXT)), coalesce(tags_json, '{}')
+         FROM gfa1_path ORDER BY path_id",
+    )?;
+    let mut elements_query = db.prepare(
         "SELECT
             coalesce(name, cast(segment_id AS TEXT)) AS segment_name, reverse, cigar_vs_previous
-         FROM {}gfa1_path_element LEFT JOIN {}gfa1_segment_meta USING(segment_id)
+         FROM gfa1_path_element LEFT JOIN gfa1_segment_meta USING(segment_id)
          WHERE path_id=? ORDER BY path_id, ordinal",
-        prefix, prefix
-    ))?;
+    )?;
     let mut paths_cursor = paths_query.query(NO_PARAMS)?;
     while let Some(pathrow) = paths_cursor.next()? {
         let path_id: i64 = pathrow.get(0)?;
@@ -168,7 +150,7 @@ fn write_paths(db: &rusqlite::Connection, prefix: &str, writer: &mut dyn io::Wri
                 String::from("*")
             }
         ))?;
-        write_tags(&path_table, path_id, &tags_json, writer)?;
+        write_tags("gfa1_path", path_id, &tags_json, writer)?;
         writer.write(b"\n")?;
     }
     Ok(())

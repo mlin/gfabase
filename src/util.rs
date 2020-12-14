@@ -77,14 +77,6 @@ where
     fold_tsv_no_comments(|(), tsv| f(tsv), (), filename, comment)
 }
 
-pub fn simple_placeholder(template: &str, key: &str, val: &str) -> String {
-    let pat = r"\{\{\s*".to_string() + key + r"\s*\}\}";
-    regex::Regex::new(&pat)
-        .unwrap()
-        .replace_all(template, val)
-        .to_string()
-}
-
 pub fn delete_existing_file(filename: &str) -> Result<()> {
     debug!("deleting if present: {}", filename);
     let p = Path::new(filename);

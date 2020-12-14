@@ -23,7 +23,6 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    let prefix = "";
     let records_processed;
 
     // formulate GenomicSQLite configuration JSON
@@ -32,7 +31,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     {
         // open transaction & apply schema
         let txn = db.transaction()?;
-        create_tables(&txn, prefix)?;
+        create_tables(&txn)?;
 
         // add temp tables for metadata, which we'll copy into the main db file after writing all
         // the segment sequences; this ensures the metadata is stored ~contiguously instead of
@@ -52,27 +51,26 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         info!("processing GFA1 records...");
-        records_processed = insert_gfa1(&opts.gfa, &txn, prefix)?;
+        records_processed = insert_gfa1(&opts.gfa, &txn)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
             info!("processed {} GFA1 record(s)", records_processed);
             info!("writing segment metadata...");
             // copy metadata as planned
-            txn.execute_batch(&format!(
-                "INSERT INTO {}gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
+            txn.execute_batch(
+                "INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
                     SELECT segment_id, name, sequence_length, tags_json
                     FROM temp.segment_meta_hold;
-                INSERT INTO {}gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
+                INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
                     SELECT segment_id, refseq_name, refseq_begin, refseq_end
                     FROM temp.segment_mapping_hold ORDER BY segment_id",
-                prefix, prefix
-            ))?;
+            )?;
             info!("insertions complete");
         }
 
         // indexing
-        create_indexes(&txn, prefix)?;
+        create_indexes(&txn)?;
 
         // done
         info!("flushing {} ...", &opts.gfab);
@@ -118,30 +116,27 @@ pub fn new_db(filename: &str, compress: i8, page_cache_MiB: i32) -> Result<rusql
     Ok(db)
 }
 
-pub fn create_tables(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
-    let mut gfa_sql = include_str!("schema/GFA1.sql").to_string();
-    gfa_sql = util::simple_placeholder(&gfa_sql, "prefix", prefix);
-    db.execute_batch(&gfa_sql)?;
+pub fn create_tables(db: &rusqlite::Connection) -> Result<()> {
+    db.execute_batch(include_str!("schema/GFA1.sql"))?;
     info!("created GFA1 tables");
     Ok(())
 }
 
-pub fn create_indexes(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
     info!("indexing:");
 
     let ddl = include_str!("schema/GFA1.index.sql");
     for index_spec in ddl.split(";") {
-        let mut index_sql = index_spec.trim().to_string();
+        let index_sql = index_spec.trim();
         if !index_sql.is_empty() {
-            index_sql = util::simple_placeholder(&index_sql, "prefix", prefix);
             info!("\t{} ...", index_sql.splitn(2, " ON").next().unwrap());
-            db.execute_batch(&index_sql)?;
+            db.execute_batch(index_sql)?;
         }
     }
 
     // add GRI for segment mappings
     let gri_sql = db.create_genomic_range_index_sql(
-        &format!("{}gfa1_segment_mapping", prefix),
+        "gfa1_segment_mapping",
         "refseq_name",
         "refseq_begin",
         "refseq_end",
@@ -155,30 +150,24 @@ pub fn create_indexes(db: &rusqlite::Connection, prefix: &str) -> Result<()> {
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<usize> {
+fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
-    let mut stmt_insert_segment_sequence = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))",
-        prefix
-    ))?;
-    let mut stmt_insert_link = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)",
-        prefix
-    ))?;
-    let mut stmt_insert_segment_mapping = txn.prepare(&format!(
-        "INSERT INTO {}temp.segment_mapping_hold(segment_id,refseq_name,refseq_begin,refseq_end) VALUES(?,?,?,?)",
-        prefix
-    ))?;
-    let mut stmt_insert_path = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_path(path_id,name,tags_json) VALUES(?,?,?)",
-        prefix
-    ))?;
-    let mut stmt_insert_path_element = txn.prepare(&format!(
-        "INSERT INTO {}gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_previous) VALUES(?,?,?,?,?)",
-        prefix
-    ))?;
+    let mut stmt_insert_segment_sequence = txn.prepare(
+        "INSERT INTO gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))"
+    )?;
+    let mut stmt_insert_link = txn.prepare(
+        "INSERT INTO gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)"
+    )?;
+    let mut stmt_insert_segment_mapping = txn.prepare(
+        "INSERT INTO temp.segment_mapping_hold(segment_id,refseq_name,refseq_begin,refseq_end) VALUES(?,?,?,?)"
+    )?;
+    let mut stmt_insert_path =
+        txn.prepare("INSERT INTO gfa1_path(path_id,name,tags_json) VALUES(?,?,?)")?;
+    let mut stmt_insert_path_element = txn.prepare(
+        "INSERT INTO gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_previous) VALUES(?,?,?,?,?)"
+    )?;
 
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
@@ -213,11 +202,11 @@ fn insert_gfa1(filename: &str, txn: &Transaction, prefix: &str) -> Result<usize>
                 )
             }
             "C" => {
-                panic!("gfabase doesn't yet support GFA Containment records; please bug the maintainers");
+                panic!("gfabase hasn't yet implemented GFA Containment records; please bug the maintainers");
             }
             other => {
                 if !other_record_types.contains(other) {
-                    warn!("ignoring record(s) with RecordType = {}", other);
+                    warn!("ignored record(s) with RecordType = {}", other);
                     other_record_types.insert(String::from(other));
                 }
                 Ok(())

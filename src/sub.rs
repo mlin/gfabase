@@ -35,7 +35,6 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    let prefix = "";
     let sub_segment_count: i64;
 
     if opts.outfile == "" || opts.outfile == "-" {
@@ -65,16 +64,15 @@ pub fn main(opts: &Opts) -> Result<()> {
                 txn.prepare("INSERT OR REPLACE INTO temp.start_segments(segment_id) VALUES(?)")?
             } else {
                 // GRI query
-                txn.prepare(&format!(
+                txn.prepare(
                     "INSERT OR REPLACE INTO temp.start_segments(segment_id)
-                     SELECT segment_id FROM {}gfa1_segment_mapping
+                     SELECT segment_id FROM gfa1_segment_mapping
                         WHERE _rowid_ in genomic_range_rowids(
-                            '{}gfa1_segment_mapping',
+                            'gfa1_segment_mapping',
                             parse_genomic_range_sequence(?1),
                             parse_genomic_range_begin(?1),
                             parse_genomic_range_end(?1))",
-                    prefix, prefix
-                ))?
+                )?
             };
             for segment in &opts.segments {
                 if opts.reference {
@@ -91,14 +89,13 @@ pub fn main(opts: &Opts) -> Result<()> {
         }
 
         // check existence of all the specified segments
-        txn.execute_batch(&format!(
+        txn.execute_batch(
             "CREATE TABLE temp.unknown_segments(segment_id INTEGER PRIMARY KEY);
              INSERT INTO temp.unknown_segments
                  SELECT temp.start_segments.segment_id AS segment_id
-                 FROM temp.start_segments LEFT JOIN input.{}gfa1_segment_meta USING (segment_id)
-                 WHERE input.{}gfa1_segment_meta.segment_id IS NULL",
-            prefix, prefix
-        ))?;
+                 FROM temp.start_segments LEFT JOIN input.gfa1_segment_meta USING (segment_id)
+                 WHERE input.gfa1_segment_meta.segment_id IS NULL",
+        )?;
         {
             let mut missing_examples = Vec::new();
             let mut missing_examples_stmt =
@@ -119,8 +116,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         if opts.connected {
             // sub_segments = connected components including start_segments
-            let mut connected_sql = include_str!("query/connected_old.sql").to_string();
-            connected_sql = util::simple_placeholder(&connected_sql, "prefix", prefix)
+            let connected_sql = include_str!("query/connected_old.sql").to_string()
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
             info!("computing connected component(s)...");
             txn.execute_batch(&connected_sql)?;
@@ -134,7 +130,7 @@ pub fn main(opts: &Opts) -> Result<()> {
                 row.get(0)
             })?;
 
-        load::create_tables(&txn, prefix)?;
+        load::create_tables(&txn)?;
 
         if sub_segment_count == 0 {
             warn!("no segments matched the command-line criteria")
@@ -143,12 +139,10 @@ pub fn main(opts: &Opts) -> Result<()> {
                 "copying {} segments (and links & paths touching only those segments)",
                 sub_segment_count
             );
-            let mut sub_sql = include_str!("query/sub.sql").to_string();
-            sub_sql = util::simple_placeholder(&sub_sql, "prefix", prefix);
-            txn.execute_batch(&sub_sql)?;
+            txn.execute_batch(include_str!("query/sub.sql"))?;
         }
 
-        load::create_indexes(&txn, prefix)?;
+        load::create_indexes(&txn)?;
 
         info!("flushing {} ...", &opts.outfile);
         txn.commit()?
