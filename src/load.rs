@@ -20,6 +20,10 @@ pub struct Opts {
     /// compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
+
+    /// disable two-bit encoding for segment sequences (less efficient, but preserves U and lowercase nucleotides)
+    #[clap(long)]
+    pub no_twobit: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -54,7 +58,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         debug!("processing GFA1 records...");
-        records_processed = insert_gfa1(&opts.gfa, &txn)?;
+        records_processed = insert_gfa1(&opts.gfa, &txn, !opts.no_twobit)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
@@ -157,13 +161,14 @@ pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
+fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
-    let mut stmt_insert_segment_sequence = txn.prepare(
-        "INSERT INTO gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,nucleotides_twobit(?))"
-    )?;
+    let mut stmt_insert_segment_sequence = txn.prepare(&format!(
+        "INSERT INTO gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,{})",
+        if twobit { "nucleotides_twobit(?)" } else { "?" }
+    ))?;
     let mut stmt_insert_link = txn.prepare(
         "INSERT INTO gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)"
     )?;
@@ -179,6 +184,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
     let mut maybe_header = None;
+    let mut sequence_char_warning = !twobit;
 
     // closure to process one record
     let mut other_record_types = HashSet::new();
@@ -193,6 +199,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
                     &mut stmt_insert_segment_mapping,
                     &mut stmt_insert_segment_sequence,
                     &mut segments_by_name,
+                    &mut sequence_char_warning,
                 )
             }
             "L" => {
@@ -253,6 +260,7 @@ fn insert_gfa1_segment(
     stmt_mapping: &mut Statement,
     stmt_sequence: &mut Statement,
     segments_by_name: &mut HashMap<String, i64>,
+    sequence_char_warning: &mut bool,
 ) -> Result<()> {
     assert_eq!(tsv[0], "S");
     if tsv.len() < 2 {
@@ -291,6 +299,18 @@ fn insert_gfa1_segment(
         segments_by_name.insert(String::from(nm), rowid_actual);
     }
     if let Some(seq) = maybe_sequence {
+        if !*sequence_char_warning {
+            for ch in seq.chars() {
+                match ch {
+                    'a' | 'c' | 'g' | 't' | 'u' | 'U' => {
+                        warn!("segment sequences contain 'U' and/or lowercase nucleotides, which may not be preserved in the .gfab encoding (example segment_id = {})", rowid_actual);
+                        *sequence_char_warning = true;
+                        break;
+                    }
+                    _ => (),
+                }
+            }
+        }
         stmt_sequence.execute(params![rowid_actual, seq])?;
     }
 
