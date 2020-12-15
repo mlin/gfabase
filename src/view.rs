@@ -33,6 +33,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     // open output writer
     let mut writer_box = writer(opts.gfa.as_ref().map(String::as_str))?;
     let out = &mut *writer_box;
+    write_header(&db, out)?;
     write_segments(&db, "", !opts.no_sequences, out)?;
     write_links(&db, "", out)?;
     write_paths(&db, "", out)?;
@@ -51,6 +52,18 @@ pub fn writer(gfa_filename: Option<&str>) -> Result<Box<dyn io::Write>> {
             Ok(Box::new(io::BufWriter::new(fs::File::create(p)?)))
         }
     }
+}
+
+pub fn write_header(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
+    let tags_json: String = db.query_row(
+        "SELECT tags_json FROM gfa1_header WHERE _rowid_ = 1",
+        NO_PARAMS,
+        |row| row.get(0),
+    )?;
+    writer.write(b"H")?;
+    write_tags("gfa1_header", 1, &tags_json, writer)?;
+    writer.write(b"\n")?;
+    Ok(())
 }
 
 pub fn write_segments(

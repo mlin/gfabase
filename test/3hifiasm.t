@@ -35,6 +35,6 @@ is "$(gsql 'select sum(twobit_length(sequence_twobit)) from gfa1_segment_sequenc
 
 # sub by segment name
 $gfabase sub --view "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" - utg000042l utg050830l utg021888l > "${TMPDIR}/sub.gfa"
-is "$(cat "${TMPDIR}/sub.gfa" | wc -l)" "7" "sub by segment name"
+is "$(cat "${TMPDIR}/sub.gfa" | wc -l)" "8" "sub by segment name"
 
 rm -rf "$TMPDIR"

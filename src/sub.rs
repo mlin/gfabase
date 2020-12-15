@@ -30,13 +30,17 @@ pub struct Opts {
     #[clap(name = "SEGMENT")]
     pub segments: Vec<String>,
 
-    // Instead of .gfab, output .gfa to outfile (- for stdout)
+    /// Write .gfa instead of .gfab to outfile (- for stdout)
     #[clap(long)]
     pub view: bool,
 
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
+
+    /// compression level (-5 to 22) for output .gfab
+    #[clap(long, default_value = "6")]
+    pub compress: i8,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -59,7 +63,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     }
 
     // create output database
-    let mut db = load::new_db(&opts.outfile, 6, 1024)?;
+    let mut db = load::new_db(&opts.outfile, opts.compress, 1024)?;
 
     // attach input database
     let mut dbopts_in = json::object::Object::new();
@@ -136,6 +140,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
 
+    view::write_header(&db, out)?;
     view::write_segments(
         &db,
         "WHERE segment_id IN temp.sub_segments",

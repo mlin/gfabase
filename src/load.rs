@@ -17,7 +17,7 @@ pub struct Opts {
     /// destination gfab filename
     pub gfab: String,
 
-    /// Zstandard compression level (-7 to 22)
+    /// compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
 }

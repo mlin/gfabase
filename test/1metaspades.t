@@ -68,7 +68,7 @@ is "$?" "0" "sub --view scaffold NODE_2_length_747618_cov_15.708553_3"
 time gfabase sub --view "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" "${TMPDIR}/sub_by_path.gfa" --path \
     NODE_2_length_747618_cov_15.708553_3 NODE_2_length_747618_cov_15.708553_4
 is "$?" "0" "sub --view by path"
-is "$(cat "${TMPDIR}/sub_by_path.gfa" | wc -l)" "14" "sub --view by path line count"
+is "$(cat "${TMPDIR}/sub_by_path.gfa" | wc -l)" "15" "sub --view by path line count"
 
 # test behavior w/ empty input
 gfabase load /dev/null "${TMPDIR}/empty.gfab"
