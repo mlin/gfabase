@@ -18,7 +18,7 @@ gfabase="cargo run --release -- --verbose"
 export TMPDIR=$(mktemp -d --tmpdir gfabase_hifiasm_test_XXXXXX)
 
 bgzip -dc -@ 4 /tmp/HG002-v0.11.dip.r_utg.gfa.gz \
-    | time $gfabase load - "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab"
+    | time $gfabase load - "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" --compress 1
 is "$?" "0" "gfabase load"
 
 ls -lh /tmp/HG002-v0.11.dip.r_utg.gfa.gz "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab"

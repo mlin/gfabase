@@ -13,20 +13,23 @@ pub enum Error {
     #[error(transparent)]
     DbError(#[from] rusqlite::Error),
 
-    #[error("[Bad command] {0}")]
+    #[error("[bad command] {0}")]
     BadCommand(String),
 
-    #[error("[Invalid GFA input] {0}")]
+    #[error("[invalid GFA input] {0}")]
     InvalidGfa(String),
 
-    #[error("[Invalid .gfab][table = {table:?}, rowid = {rowid:?}] {message:?}")]
+    #[error("[invalid .gfab][table = {table:?}, rowid = {rowid:?}] {message:?}")]
     InvalidGfab {
         message: String,
         table: String,
         rowid: i64,
     },
 
-    #[error("Empty .gfab")]
+    #[error("file isn't .gfab format (or corrupt)")]
+    NotGfab,
+
+    #[error("empty .gfab")]
     EmptyGfab,
 }
 
@@ -87,5 +90,38 @@ pub fn delete_existing_file(filename: &str) -> Result<()> {
         }
         Err(ioerr) if ioerr.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(ioerr) => Err(Error::IoError(ioerr)),
+    }
+}
+
+pub fn check_gfabase_schema(db: &rusqlite::Connection, schema: &str) -> Result<()> {
+    let version: rusqlite::Result<String> = db.query_row(
+        &format!(
+            "SELECT json_extract(tags_json, '$.PG:Z') FROM {}gfa1_header WHERE _rowid_ = 1",
+            schema
+        ),
+        rusqlite::NO_PARAMS,
+        |row| row.get(0),
+    );
+    match version {
+        Ok(s) if s.starts_with("gfabase-v") => Ok(()),
+        _ => Err(Error::NotGfab),
+    }
+}
+
+pub fn check_gfabase_filename_schema(filename: &str) -> Result<()> {
+    // not "safe", but usually gives more-helpful error message:
+    if !Path::new(filename).is_file() {
+        return Err(Error::IoError(io::Error::new(
+            io::ErrorKind::NotFound,
+            "File not found",
+        )));
+    }
+    match genomicsqlite::open(
+        filename,
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        &json::object::Object::new(),
+    ) {
+        Ok(db) => check_gfabase_schema(&db, ""),
+        _ => Err(Error::NotGfab),
     }
 }

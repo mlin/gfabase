@@ -2,15 +2,11 @@
 -- of a desired subgraph. From attached input.* it copies the segments and the links
 -- between them (only the links with both source and sink in the subgraph) into the main db.
 
-INSERT INTO gfa1_header(_rowid_, tags_json)
-    SELECT _rowid_, tags_json FROM input.gfa1_header
-    WHERE _rowid_ = 1;
-
--- gfa1_segment_sequences copied in code, if not --no-sequences
-
 INSERT INTO gfa1_segment_meta(segment_id, name, tags_json)
     SELECT segment_id, name, tags_json FROM input.gfa1_segment_meta
     WHERE segment_id IN temp.sub_segments;
+
+-- gfa1_segment_sequences copied in code (if not --no-sequences)
 
 INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json)
     SELECT segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json
@@ -43,3 +39,7 @@ INSERT INTO gfa1_path_element(path_id, ordinal, segment_id, reverse, cigar_vs_pr
     WHERE path_id IN temp.sub_paths;
 
 --DROP TABLE temp.sub_paths;
+
+INSERT INTO gfa1_header(_rowid_, tags_json)
+    SELECT _rowid_, tags_json FROM input.gfa1_header
+    WHERE _rowid_ = 1;

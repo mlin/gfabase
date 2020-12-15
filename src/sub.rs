@@ -47,6 +47,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     if opts.segments.len() == 0 {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
+    util::check_gfabase_filename_schema(&opts.gfab)?;
     if !opts.view {
         sub_gfab(opts)
     } else {
@@ -70,6 +71,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     dbopts_in.insert("immutable", json::JsonValue::from(true));
     let attach_sql = db.genomicsqlite_attach_sql(&opts.gfab, "input", &dbopts_in)?;
     db.execute_batch(&attach_sql)?;
+    util::check_gfabase_schema(&db, "input.")?;
 
     let sub_segment_count: i64;
     {

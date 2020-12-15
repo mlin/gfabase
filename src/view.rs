@@ -19,6 +19,8 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
+    util::check_gfabase_filename_schema(&opts.gfab)?;
+
     // formulate GenomicSQLite configuration JSON
     let mut dbopts = json::object::Object::new();
     dbopts.insert("immutable", json::JsonValue::from(true));
@@ -29,6 +31,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
     )?;
+    util::check_gfabase_schema(&db, "")?;
 
     // open output writer
     let mut writer_box = writer(opts.gfa.as_ref().map(String::as_str))?;
