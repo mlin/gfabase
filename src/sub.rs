@@ -253,7 +253,7 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
 
     if opts.connected {
         // sub_segments = connected components including start_segments
-        let connected_sql = include_str!("query/connected_old.sql").to_string()
+        let connected_sql = include_str!("query/connected.sql").to_string()
             + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
         debug!("computing connected component(s)...");
         db.execute_batch(&connected_sql)?;
