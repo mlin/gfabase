@@ -2,7 +2,7 @@
 
 ### WIP for show &amp; tell, don't use yet
 
-`gfabase` is a command-line tool for random-access storage of [Graphical Fragment Assembly (GFA)](https://github.com/GFA-spec/GFA-spec) data. It imports a .gfa file into a compressed **.gfab** file, from which it can later access subgraphs quickly (reading only the necessary parts), producing .gfa or .gfab. In addition to access by segments and links, .gfab can index segment mappings to linear reference sequences. This facilitates navigation within *de novo* assemblies or [rGFA reference graphs](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md), with quick access to subgraphs connected to linear coordinate ranges.
+`gfabase` is a command-line tool for random-access storage of [Graphical Fragment Assembly (GFA)](https://github.com/GFA-spec/GFA-spec) data. It imports a .gfa file into a compressed **.gfab** file, from which it can later access subgraphs quickly (reading only the necessary parts), producing .gfa or .gfab. Beyond ID-based access, .gfab can index segments by their mappings to linear reference coordinates. This facilitates navigation within *de novo* assemblies or [rGFA reference graphs](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md), with quick access to subgraphs connected to linear coordinate ranges.
 
 Effectively, .gfab is a new GFA-superset format with built-in compression and indexing. It is in fact a SQLite (+ [Genomics Extension](https://github.com/mlin/GenomicSQLite)) database populated with a [GFA-like schema](src/schema/GFA1.sql). Programmers have the option to access .gfab files directly using SQLite (+ Genomics Extension), without requiring `gfabase` nor even a low-level parser for .gfa/.gfab.
 
@@ -24,7 +24,7 @@ Then, a few things to try:
 alias gfabase=$(pwd)/target/release/gfabase
 
 # import a rGFA file into .gfab
-gfabase load <(zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst) /tmp/chr22_chrY.gfab --rgfa
+gfabase load <(zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst) /tmp/chr22_chrY.gfab
 
 # extract subgraph of chrY segments (only) and links between them
 gfabase sub /tmp/chr22_chrY.gfab /tmp/chrYonly.gfab --reference chrY:1-999,999,999

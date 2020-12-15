@@ -2,10 +2,6 @@
 -- of a desired subgraph. From attached input.* it copies the segments and the links
 -- between them (only the links with both source and sink in the subgraph) into the main db.
 
-INSERT INTO gfa1_segment_sequence(segment_id, sequence_twobit)
-    SELECT segment_id, sequence_twobit FROM input.gfa1_segment_sequence
-    WHERE segment_id IN temp.sub_segments;
-
 INSERT INTO gfa1_segment_meta(segment_id, name, tags_json)
     SELECT segment_id, name, tags_json FROM input.gfa1_segment_meta
     WHERE segment_id IN temp.sub_segments;

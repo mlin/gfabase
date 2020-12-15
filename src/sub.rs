@@ -14,7 +14,7 @@ pub struct Opts {
     /// output filename
     pub outfile: String,
 
-    /// follow links from specified segment(s) to get full connected component(s)
+    /// Follow links from specified segment(s) to get full connected component(s)
     #[clap(long)]
     pub connected: bool,
 
@@ -30,9 +30,13 @@ pub struct Opts {
     #[clap(name = "SEGMENT")]
     pub segments: Vec<String>,
 
-    // instead of .gfab, output .gfa to outfile (- for stdout)
+    // Instead of .gfab, output .gfa to outfile (- for stdout)
     #[clap(long)]
     pub view: bool,
+
+    /// Omit segment sequences
+    #[clap(long)]
+    pub no_sequences: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -81,6 +85,13 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
                 "copying {} segments (and links & paths touching only those segments)",
                 sub_segment_count
             );
+            if !opts.no_sequences {
+                txn.execute_batch(
+                    "INSERT INTO gfa1_segment_sequence(segment_id, sequence_twobit)
+                     SELECT segment_id, sequence_twobit FROM input.gfa1_segment_sequence
+                     WHERE segment_id IN temp.sub_segments",
+                )?;
+            }
             txn.execute_batch(include_str!("query/sub.sql"))?;
         }
 
@@ -125,7 +136,12 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
 
-    view::write_segments(&db, "WHERE segment_id IN temp.sub_segments", out)?;
+    view::write_segments(
+        &db,
+        "WHERE segment_id IN temp.sub_segments",
+        !opts.no_sequences,
+        out,
+    )?;
     view::write_links(
         &db,
         "WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",

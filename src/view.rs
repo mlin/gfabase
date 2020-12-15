@@ -13,6 +13,9 @@ pub struct Opts {
     pub gfab: String,
     /// output GFA file [stdout]
     pub gfa: Option<String>,
+    /// Omit segment sequences
+    #[clap(long)]
+    pub no_sequences: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -30,7 +33,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     // open output writer
     let mut writer_box = writer(opts.gfa.as_ref().map(String::as_str))?;
     let out = &mut *writer_box;
-    write_segments(&db, "", out)?;
+    write_segments(&db, "", !opts.no_sequences, out)?;
     write_links(&db, "", out)?;
     write_paths(&db, "", out)?;
     out.flush()?;
@@ -53,14 +56,20 @@ pub fn writer(gfa_filename: Option<&str>) -> Result<Box<dyn io::Write>> {
 pub fn write_segments(
     db: &rusqlite::Connection,
     where_clause: &str,
+    with_sequences: bool,
     writer: &mut dyn io::Write,
 ) -> Result<()> {
-    let segments_query_sql = String::from(
+    let segments_query_sql = String::from(if with_sequences {
         "SELECT
-            segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
-            coalesce(tags_json, '{}'), sequence
-            FROM gfa1_segment ",
-    ) + where_clause;
+                segment_id, coalesce(name, cast(segment_id AS TEXT)), sequence_length,
+                coalesce(tags_json, '{}'), sequence
+             FROM gfa1_segment "
+    } else {
+        "SELECT
+                segment_id, coalesce(name, cast(segment_id AS TEXT)),
+                sequence_length, coalesce(tags_json, '{}')
+             FROM gfa1_segment_meta "
+    }) + where_clause;
     let mut segments_query = db.prepare(&segments_query_sql)?;
     let mut segments_cursor = segments_query.query(NO_PARAMS)?;
     while let Some(segrow) = segments_cursor.next()? {
@@ -68,7 +77,7 @@ pub fn write_segments(
         let name: String = segrow.get(1)?;
         let maybe_sequence_length: Option<i64> = segrow.get(2)?;
         let tags_json: String = segrow.get(3)?;
-        let sequence: Option<String> = segrow.get(4)?;
+        let sequence: Option<String> = if with_sequences { segrow.get(4)? } else { None };
         writer.write_fmt(format_args!(
             "S\t{}\t{}",
             name,

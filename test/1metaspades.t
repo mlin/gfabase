@@ -7,7 +7,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 16
+plan tests 18
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -43,6 +43,11 @@ is "$roundtrip_path_digest" "$path_digest" "paths roundtrip identical"
 # additional roundtrip back through load
 gfabase load "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.roundtrip.gfa" "${TMPDIR}/roundtrip2.gfab"
 is "$?" "0" "roundtrip2"
+
+gfabase view "${TMPDIR}/roundtrip2.gfab" --no-sequences | grep GATTACA
+is "$?" "1" "view --no-sequences"
+gfabase view "${TMPDIR}/roundtrip2.gfab" | grep GATTACA > /dev/null
+is "$?" "0" "view --no-sequences (control)"
 
 # sub two scaffolds and make sure we get those Paths
 time gfabase sub "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" "${TMPDIR}/sub.gfab" \
