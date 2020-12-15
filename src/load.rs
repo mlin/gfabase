@@ -178,6 +178,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
 
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
+    let mut maybe_header = None;
 
     // closure to process one record
     let mut other_record_types = HashSet::new();
@@ -211,6 +212,14 @@ fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
             "C" => {
                 panic!("gfabase hasn't yet implemented GFA Containment records; please bug the maintainers");
             }
+            "H" => {
+                records += 1;
+                if maybe_header.is_some() {
+                    invalid_gfa!("multiple header (H) records");
+                }
+                maybe_header = Some(prepare_tags_json(tsv, 1)?);
+                Ok(())
+            }
             other => {
                 if !other_record_types.contains(other) {
                     warn!("ignored record(s) with RecordType = {}", other);
@@ -223,6 +232,17 @@ fn insert_gfa1(filename: &str, txn: &Transaction) -> Result<usize> {
 
     // iterate tsv records
     util::iter_tsv_no_comments(dispatch, filename, Some('#' as u8))?;
+
+    let mut header = maybe_header.unwrap_or(object::Object::new());
+    header.insert(
+        "PG:Z",
+        json::JsonValue::from(format!("gfabase-v{}", env!("CARGO_PKG_VERSION"))),
+    );
+    txn.execute(
+        "INSERT INTO gfa1_header(_rowid_, tags_json) VALUES(1, ?)",
+        params![header.dump()],
+    )?;
+
     Ok(records)
 }
 

@@ -77,3 +77,8 @@ CREATE TABLE gfa1_path_element(
     cigar_vs_previous TEXT,                         -- NULL for the first element
     PRIMARY KEY (path_id,ordinal)
 ) WITHOUT ROWID;
+
+-- Header
+CREATE TABLE gfa1_header(
+    tags_json TEXT
+);
