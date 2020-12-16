@@ -26,10 +26,7 @@ jobs:
     - uses: actions/checkout@v2
       with:
         fetch-depth: 0
-    - name: dependencies
-      run: |
-        sudo apt-get install -y aria2 tabix
-        sudo pip3 install genomicsqlite
+        submodules: recursive
     - name: rust toolchain
       uses: actions-rs/toolchain@v1
       with:
@@ -39,5 +36,32 @@ jobs:
       run: cargo build --release
     - name: test
       run: |
-        git submodule update --init --recursive
+        sudo apt-get install -y aria2 tabix
+        sudo pip3 install genomicsqlite
         prove -v test/*.t
+
+  linux-exe:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        submodules: recursive
+    - name: build exe
+      run: docker build -t gfabase .
+    - name: test exe
+      run: docker run --rm gfabase
+    - name: ldd
+      run: |
+        docker run gfabase ldd -v -r target/release/gfabase
+        echo "----"
+        docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
+        ldd -v -r gfabase
+        echo "----"
+        ./gfabase version
+    - uses: actions/upload-artifact@v2
+      with:
+        name: gfabase_linux_x86_64
+        path: |
+          gfabase
+          libsqlite3.so.0
