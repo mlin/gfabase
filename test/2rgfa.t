@@ -11,7 +11,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 12
+plan tests 15
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -64,5 +64,17 @@ gfabase sub --view \
     > "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa"
 is "$(grep "^S" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "3319" "chr22-connected segments --view"
 is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "4795" "chr22-connected links --view"
+
+# sub --radius-bp
+gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
+    chr22:11,000,000-12,000,000 --reference --radius-bp 100000 --view \
+    > "${TMPDIR}/radius.gfa"
+is $(cat "${TMPDIR}/radius.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
+   "fcbc6fd76fd6b4220aeeaad1772044ce923cc8e3d488bbcdf292c13eb668b40f" "sub --radius-bp segments"
+is $(cat "${TMPDIR}/radius.gfa" | grep "^L" | wc -l) "65" "sub --radius-bp link count"
+
+is "$(gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
+      chr22:15,000,000-15,000,001 --reference --radius-bp 999999999 --view | grep "^S" | wc -l)" \
+   "3319" "sub --radius-bp 999999999"
 
 rm -rf "$TMPDIR"
