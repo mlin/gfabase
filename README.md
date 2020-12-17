@@ -6,7 +6,7 @@ Effectively, .gfab is a new GFA-superset format with built-in compression and in
 
 ### Quick start
 
-Each [Release](https://github.com/mlin/gfabase/releases) includes a prebuilt `gfabase` executable that should work on Linux x86-64 hosts of 2016+ vintage (with one caveat shown there). The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
+Each [Release](https://github.com/mlin/gfabase/releases) includes a prebuilt `gfabase` executable for modern Linux x86-64 hosts (with one caveat, shown there). The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
 
 ```bash
 # stream two example GFA files into corresponding .gfab files:
