@@ -175,6 +175,12 @@ fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize>
     let mut stmt_insert_segment_mapping = txn.prepare(
         "INSERT INTO temp.segment_mapping_hold(segment_id,refseq_name,refseq_begin,refseq_end) VALUES(?,?,?,?)"
     )?;
+    let mut stmt_parse_rr = txn.prepare(
+        "SELECT
+            parse_genomic_range_sequence(?1),
+            parse_genomic_range_begin(?1),
+            parse_genomic_range_end(?1)",
+    )?;
     let mut stmt_insert_path =
         txn.prepare("INSERT INTO gfa1_path(path_id,name,tags_json) VALUES(?,?,?)")?;
     let mut stmt_insert_path_element = txn.prepare(
@@ -196,8 +202,9 @@ fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize>
                     tsv,
                     txn,
                     &mut stmt_insert_segment_meta,
-                    &mut stmt_insert_segment_mapping,
                     &mut stmt_insert_segment_sequence,
+                    &mut stmt_insert_segment_mapping,
+                    &mut stmt_parse_rr,
                     &mut segments_by_name,
                     &mut sequence_char_warning,
                 )
@@ -257,8 +264,9 @@ fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
     stmt_meta: &mut Statement,
-    stmt_mapping: &mut Statement,
     stmt_sequence: &mut Statement,
+    stmt_mapping: &mut Statement,
+    stmt_parse_rr: &mut Statement,
     segments_by_name: &mut HashMap<String, i64>,
     sequence_char_warning: &mut bool,
 ) -> Result<()> {
@@ -330,6 +338,27 @@ fn insert_gfa1_segment(
             ))?;
         }
         _ => (),
+    }
+
+    // add a mapping from rr:Z tag (if present)
+    if let Some(rr) = tags_json
+        .get("rr:Z")
+        .map(|j| j.as_str().map(|s| String::from(s)))
+        .flatten()
+    {
+        stmt_parse_rr
+            .query_row(params![rr], |row| {
+                let refseq_name: String = row.get(0)?;
+                let refseq_begin: i64 = row.get(1)?;
+                let refseq_end: i64 = row.get(2)?;
+                stmt_mapping.execute(params!(rowid_actual, refseq_name, refseq_begin, refseq_end,))
+            })
+            .map_err(|_| {
+                util::Error::InvalidGfa(format!(
+                    "unable to parse rr:Z as genomic range (e.g. chr1:2,345-6,789): {}",
+                    rr
+                ))
+            })?;
     }
 
     Ok(())
