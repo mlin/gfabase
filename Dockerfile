@@ -6,7 +6,7 @@ ARG zstd_version=1.4.5
 ARG target_cpu=haswell
 
 ENV CFLAGS="-march=${target_cpu} -O3"
-ENV RUSTFLAGS="-C target-cpu=${target_cpu}"
+ENV RUSTFLAGS="-C target-cpu=${target_cpu} -C link-args=-Wl,-rpath,\$ORIGIN"
 
 # apt
 RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \

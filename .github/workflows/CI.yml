@@ -54,9 +54,11 @@ jobs:
     - name: ldd
       run: |
         docker run gfabase ldd -v -r target/release/gfabase
+        docker run gfabase readelf -d target/release/gfabase
         echo "----"
         docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
         ldd -v -r gfabase
+        readelf -d gfabase
         echo "----"
         ./gfabase version
     - uses: actions/upload-artifact@v2
