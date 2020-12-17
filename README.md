@@ -6,16 +6,9 @@ Effectively, .gfab is a new GFA-superset format with built-in compression and in
 
 ### Quick start
 
-Each Release includes a prebuilt executable that should work on Linux x86-64 hosts of 2016+ vintage, *except* it requires a newer version of the SQLite shared library (3.31.0+, as found in Ubuntu 20.04+). In case it's not convenient to upgrade the system/environment SQLite, we also ship a prebuilt `libsqlite3.so.0` that `gfabase` looks for alongside itself (in the same directory) before the usual library paths. The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
+Each [Release](https://github.com/mlin/gfabase/releases) includes a prebuilt `gfabase` executable that should work on Linux x86-64 hosts of 2016+ vintage (with one caveat shown there). The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
 
 ```bash
-wget https://github.com/mlin/gfabase/releases/download/v0.1.0/gfabase
-# if system/environment SQLite <3.31.0 & inconvenient to upgrade:
-wget https://github.com/mlin/gfabase/releases/download/v0.1.0/libsqlite3.so.0
-
-chmod +x gfabase
-./gfabase version
-
 # stream two example GFA files into corresponding .gfab files:
 # 1. metaSPAdes assembly of some simulated reads (from doi:10.1016/j.cell.2019.07.010)
 curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst?raw=true" \
@@ -42,7 +35,7 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 ./gfabase view chrY.gfab | less -S
 ```
 
-If we've also `pip3 install genomicsqlite`, then we can open a .gfab file in the SQLite interactive shell and poke around in SQL:
+If we've also `pip3 install genomicsqlite`, then we can open a .gfab file in the SQLite interactive shell and poke around in SQL. (This does require up-to-date host SQLite and `sqlite3` shell.)
 
 ```
 $ genomicsqlite chr22_chrY.gfab -readonly
@@ -57,12 +50,14 @@ $ genomicsqlite chr22_chrY.gfab -readonly
 
 ### Segment mappings
 
-The tool currently understands two forms of linear mappings to make each segment discoverable by `gfabase sub --reference ...`,
+`gfabase load` currently understands two forms of linear mappings to make each segment discoverable by `gfabase sub --reference`,
 
-1. The rGFA tags `SR:Z` and `SO:i` are present *and* the segment sequence length is known (from given sequence or `LN:i`)
+1. The [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) `SN:Z` and `SO:i` are present *and* the segment sequence length is known (from given sequence or `LN:i`)
 2. Segment tag `rr:Z` giving a browser-style range like `rr:Z:chr1:2,345-6,789`
 
-Soon we plan to make it easy to source these directly from a mapper run on the segment sequences. Please send ideas.
+Notice that with `gfabase sub --reference --radius-bp N` you can usually extract the relevant subgraph given any segment with a "close enough" mapping.
+
+Soon we plan to make it easy to source the ranges directly from a mapper run on the segment sequences. Please send ideas.
 
 ### Building from source
 
