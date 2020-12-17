@@ -2,7 +2,7 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::{BTreeMap, BinaryHeap};
 
 use crate::util::Result;
 use crate::{bad_command, load, util, view};
@@ -287,6 +287,16 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
     Ok(())
 }
 
+// Compute all segments reachable by following up to `radius` links (in any direction) from a set
+// of start segments. Optionally, each link can be weighted by the sequence length of the segment
+// reached by following it. Then `radius` is roughly a bp distance (but It's Complicated, because
+// this doesn't consider the direction of the links).
+//
+// Unlike querying for the full connected component, an efficient algorithm uses a bit more state
+// than is convenient to track in SQL using WITH RECURSIVE..., so we do it in code & memory here.
+//
+//  IN: segment IDs in temp.start_segments
+// OUT: segment IDs in temp.connected_segments
 fn connected_radius(
     db: &rusqlite::Connection,
     radius: i64,
@@ -294,8 +304,8 @@ fn connected_radius(
 ) -> Result<()> {
     // max-heap on (remaining_radius, 0-segment_id)
     let mut queue: BinaryHeap<(i64, i64)> = BinaryHeap::new();
-    // segment_id -> max_radius
-    let mut visited: HashMap<i64, i64> = HashMap::new();
+    // segment_id -> max_radius (of completed visits)
+    let mut visited: BTreeMap<i64, i64> = BTreeMap::new();
 
     // fill queue with starting segments & initial radius
     {
@@ -308,7 +318,8 @@ fn connected_radius(
     }
 
     {
-        // query for incoming & outgoing links of segment, and "weight" of each link
+        // query for incoming & outgoing links of segment, and "weight" of each link (either
+        // sequence length or 1)
         let mut links_query = db.prepare(
             if sequence_length_weighted {
                 "   SELECT from_segment, sequence_length
@@ -340,7 +351,7 @@ fn connected_radius(
             visited.insert(segment, remaining_radius);
 
             if remaining_radius > 0 {
-                // if we still have energy, enqueue the segment's neighbors with appropriate deduction
+                // if we still have radius, enqueue the segment's neighbors with appropriate deduction
                 let mut links_cursor = links_query.query(params![segment])?;
                 while let Some(row) = links_cursor.next()? {
                     let neighbor: i64 = row.get(0)?;

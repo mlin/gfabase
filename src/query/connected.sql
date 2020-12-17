@@ -11,7 +11,8 @@ WITH RECURSIVE
         UNION
             -- The following subquery finds all (i) sources of the links incoming to segment_id,
             -- and (ii) sinks of the links outgoing from segment_id
-            SELECT IIF(to_segment = connected.segment_id, from_segment, to_segment)
+            SELECT
+                CASE WHEN to_segment = connected.segment_id THEN from_segment ELSE to_segment END
             FROM gfa1_link, connected
             WHERE to_segment = connected.segment_id OR from_segment = connected.segment_id
     )

@@ -1,8 +1,8 @@
 -- Segment metadata
 CREATE TABLE gfa1_segment_meta(
     segment_id INTEGER NOT NULL PRIMARY KEY,
-    name TEXT,                             -- if distinct from ID, otherwise NULL
-    sequence_length INTEGER,               -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
+    name TEXT COLLATE UINT,   -- if distinct from ID, otherwise NULL
+    sequence_length INTEGER,  -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
     tags_json TEXT
 );
 
@@ -25,13 +25,13 @@ CREATE VIEW gfa1_segment AS
 -- gfabase extension: "mappings" of segments to linear reference sequence coordinates, suitable for
 -- Genomic Range Indexing
 CREATE TABLE gfa1_segment_mapping(
-    segment_id INTEGER NOT NULL         -- nb: one segment may have multiple mappings
+    segment_id INTEGER NOT NULL              -- nb: one segment may have multiple mappings
         REFERENCES gfa1_segment_meta(segment_id),
-    refseq_name TEXT NOT NULL, -- COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
-    refseq_begin INTEGER NOT NULL,      -- zero-based begin of associated range
-    refseq_end INTEGER NOT NULL,        -- end (exclusive) of associated range
-    cigar TEXT,                         -- alignment of segment sequence to associated refseq range, if known
-    tags_json TEXT                      -- currently unused
+    refseq_name TEXT NOT NULL COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
+    refseq_begin INTEGER NOT NULL,           -- zero-based begin of associated range
+    refseq_end INTEGER NOT NULL,             -- end (exclusive) of associated range
+    cigar TEXT,                              -- alignment of segment sequence to associated refseq range, if known
+    tags_json TEXT                           -- currently unused
 );
 
 -- Link
@@ -62,7 +62,7 @@ CREATE TABLE gfa1_containment(
 -- Path
 CREATE TABLE gfa1_path(
     path_id INTEGER NOT NULL PRIMARY KEY,
-    name TEXT,                                      -- if distinct from ID, otherwise NULL
+    name TEXT COLLATE UINT,  -- if distinct from ID, otherwise NULL
     tags_json TEXT
 );
 
