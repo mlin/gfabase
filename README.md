@@ -9,6 +9,8 @@ Effectively, .gfab is a new GFA-superset format with built-in compression and in
 Each [Release](https://github.com/mlin/gfabase/releases) includes a prebuilt `gfabase` executable for modern Linux x86-64 hosts (with one caveat, shown there). The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
 
 ```bash
+./gfabase version
+
 # stream two example GFA files into corresponding .gfab files:
 # 1. metaSPAdes assembly of some simulated reads (from doi:10.1016/j.cell.2019.07.010)
 curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst?raw=true" \
