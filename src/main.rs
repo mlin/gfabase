@@ -7,6 +7,7 @@ use log::error;
 
 mod load;
 mod sub;
+mod topology;
 mod util;
 mod version;
 mod view;

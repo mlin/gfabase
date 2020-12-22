@@ -5,7 +5,7 @@ use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
 use std::collections::{BTreeMap, BinaryHeap};
 
 use crate::util::Result;
-use crate::{bad_command, load, util, view};
+use crate::{bad_command, load, topology, util, view};
 
 #[derive(Clap)]
 pub struct Opts {
@@ -43,6 +43,14 @@ pub struct Opts {
     /// Write .gfa instead of .gfab to outfile (- for stdout)
     #[clap(long)]
     pub view: bool,
+
+    /// Index topology even if source .gfab doesn't
+    #[clap(long)]
+    pub always_topology: bool,
+
+    /// Skip indexing topology even if source .gfab does so
+    #[clap(long)]
+    pub no_topology: bool,
 
     /// Omit segment sequences
     #[clap(long)]
@@ -111,7 +119,10 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
             txn.execute_batch(include_str!("query/sub.sql"))?;
         }
 
-        load::create_indexes(&txn)?;
+        load::create_indexes(
+            &txn,
+            opts.always_topology || (!opts.no_topology && topology::has_index(&txn, "input.")?),
+        )?;
 
         debug!("flushing {} ...", &opts.outfile);
         txn.commit()?

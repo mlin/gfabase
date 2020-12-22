@@ -28,7 +28,7 @@ zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.1
 gfabase load --compress 1 "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
 is "$?" "0" "gfabase load"
 cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" \
-    | gfabase load --compress 1 - "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
+    | gfabase --verbose load --compress 1 --topology - "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab"
 is "$?" "0" "gfabase load stdin"
 
 gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.roundtrip.gfa"
