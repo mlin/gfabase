@@ -5,9 +5,9 @@ extern crate log;
 use fern::colors::{Color, ColoredLevelConfig};
 use log::error;
 
+mod connectivity;
 mod load;
 mod sub;
-mod topology;
 mod util;
 mod version;
 mod view;

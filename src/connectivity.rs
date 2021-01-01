@@ -5,9 +5,9 @@ use std::collections::{BTreeMap, HashSet};
 use crate::util::Result;
 
 pub fn index(db: &rusqlite::Connection) -> Result<()> {
-    db.execute_batch(include_str!("schema/GFA1.topology.sql"))?;
+    db.execute_batch(include_str!("schema/GFA1.connectivity.sql"))?;
 
-    let mut visited_query = db.prepare("SELECT 1 from gfa1_topology WHERE segment_id = ?")?;
+    let mut visited_query = db.prepare("SELECT 1 from gfa1_connectivity WHERE segment_id = ?")?;
     let mut neighbors = db.prepare(
         // remove directionality from links
         "  SELECT from_segment FROM gfa1_link WHERE to_segment = ?1
@@ -15,7 +15,7 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
            SELECT to_segment FROM gfa1_link WHERE from_segment = ?1",
     )?;
     let mut insert = db.prepare(
-        "INSERT INTO gfa1_topology(segment_id,component_id,cuts_component) VALUES(?,?,?)",
+        "INSERT INTO gfa1_connectivity(segment_id,component_id,cuts_component) VALUES(?,?,?)",
     )?;
 
     // traverse DFS forest to discover connected components
@@ -43,12 +43,14 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
         }
     }
 
-    db.execute_batch("CREATE INDEX gfa1_topology_component ON gfa1_topology(component_id)")?;
+    db.execute_batch(
+        "CREATE INDEX gfa1_connectivity_component ON gfa1_connectivity(component_id)",
+    )?;
     Ok(())
 }
 
-// DFS traversal from given start segment; populate gfa1_topology with the discovered connected
-// component, also marking the cut segments therein. https://cp-algorithms.com/graph/cutpoints.html
+// DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
+// component, also marking cuts_component therein. https://cp-algorithms.com/graph/cutpoints.html
 // Return nonempty segment ID set iff the connected component contains at least two segments.
 
 // cutpoint algo state for each discovered segment
@@ -131,8 +133,8 @@ fn component_dfs(
             let ref mut segment_state = state.get_mut(&frame.segment).unwrap(); // to update in-place
             segment_state.t_low = cmp::min(segment_state.t_low, neighbor_low);
             if frame.segment != start_segment_id {
-                // If nothing that'd been visited earlier is reachable via this neighbor, then
-                // deleting segment would disconnect neighbor -- making it a cut segment.
+                // If nothing that we visited earlier is reachable via this neighbor, then deleting
+                // segment would disconnect neighbor -- thus cutting the current component.
                 if neighbor_low >= segment_state.t_in {
                     segment_state.cuts_component = true;
                 }
@@ -142,7 +144,7 @@ fn component_dfs(
         }
     }
 
-    // dump results into gfa1_topology
+    // dump results into gfa1_connectivity
     let mut segments = HashSet::new();
     if timestamp >= 2 {
         for (segment_id, segment_state) in state.iter() {
@@ -167,7 +169,7 @@ pub fn has_index(db: &rusqlite::Connection, schema: &str) -> Result<bool> {
     Ok(db
         .query_row(
             &format!(
-                "SELECT 1 FROM {}sqlite_master WHERE type='table' AND name='gfa1_topology'",
+                "SELECT 1 FROM {}sqlite_master WHERE type='table' AND name='gfa1_connectivity'",
                 schema
             ),
             NO_PARAMS,

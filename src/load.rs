@@ -1,12 +1,12 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use json::object;
-use log::{debug, info, warn};
+use log::{debug, info, log_enabled, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::{HashMap, HashSet};
 
+use crate::connectivity;
 use crate::invalid_gfa;
-use crate::topology;
 use crate::util;
 use crate::util::Result;
 
@@ -18,19 +18,19 @@ pub struct Opts {
     /// Destination gfab filename
     pub gfab: String,
 
-    /// Index connected components and cut vertexes (uses additional memory proportional to largest component)
-    #[clap(long)]
-    pub topology: bool,
-
     /// Compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
+
+    /// Omit index of graph connectivity (saves time & memory, disables certain queries)
+    #[clap(long)]
+    pub no_connectivity: bool,
 
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
 
-    /// Disable two-bit encoding for segment sequences (less efficient, but preserves U and lowercase nucleotides)
+    /// Disable two-bit encoding for segment sequences (less efficient, but preserves lowercase nucleotides and U's)
     #[clap(long)]
     pub no_twobit: bool,
 }
@@ -86,14 +86,16 @@ pub fn main(opts: &Opts) -> Result<()> {
         }
 
         // indexing
-        create_indexes(&txn, opts.topology)?;
+        create_indexes(&txn, !opts.no_connectivity)?;
 
         // done
         debug!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
 
-    summary(&db)?;
+    if log_enabled!(log::Level::Debug) {
+        summary(&db)?;
+    }
     db.close().map_err(|(_, e)| e)?;
     if records_processed > 0 {
         info!("🗹 done");
@@ -142,7 +144,7 @@ pub fn create_tables(db: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn create_indexes(db: &rusqlite::Connection, topology: bool) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<()> {
     info!("indexing...");
 
     let ddl = include_str!("schema/GFA1.index.sql");
@@ -164,9 +166,9 @@ pub fn create_indexes(db: &rusqlite::Connection, topology: bool) -> Result<()> {
     debug!("\tindexing segment mappings by genomic range ...");
     db.execute_batch(&gri_sql)?;
 
-    if topology {
-        debug!("\tindexing graph topology ...");
-        topology::index(db)?;
+    if connectivity {
+        debug!("\tindexing graph connectivity ...");
+        connectivity::index(db)?;
     }
 
     debug!("\tANALYZE ...");
@@ -570,8 +572,8 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
     {
         return Err(e);
     }
-    if topology::has_index(db, "")? {
-        debug!("undirected graph topology:");
+    if connectivity::has_index(db, "")? {
+        debug!("undirected graph connectivity:");
         db.query_row(
             "SELECT count(component_id), max(size), sum(size), sum(cuts), sum(bp), sum(cuts_bp) FROM
                 (SELECT
@@ -579,7 +581,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                         sum(cuts_component) AS cuts,
                         sum(sequence_length) AS bp,
                         sum(cuts_component*sequence_length) AS cuts_bp
-                 FROM gfa1_topology INNER JOIN gfa1_segment_meta USING(segment_id)
+                 FROM gfa1_connectivity INNER JOIN gfa1_segment_meta USING(segment_id)
                  GROUP BY component_id)",
             NO_PARAMS,
             |row| {

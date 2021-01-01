@@ -1,11 +1,11 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
-use log::{debug, info, warn};
+use log::{debug, info, log_enabled, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
 use std::collections::{BTreeMap, BinaryHeap};
 
 use crate::util::Result;
-use crate::{bad_command, load, topology, util, view};
+use crate::{bad_command, connectivity, load, util, view};
 
 #[derive(Clap)]
 pub struct Opts {
@@ -44,13 +44,13 @@ pub struct Opts {
     #[clap(long)]
     pub view: bool,
 
-    /// Index topology even if source .gfab doesn't
+    /// Index connectivity even if source .gfab doesn't
     #[clap(long)]
-    pub always_topology: bool,
+    pub always_connectivity: bool,
 
-    /// Skip indexing topology even if source .gfab does so
+    /// Skip indexing connectivity even if source .gfab does so
     #[clap(long)]
-    pub no_topology: bool,
+    pub no_connectivity: bool,
 
     /// Omit segment sequences
     #[clap(long)]
@@ -121,14 +121,17 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
 
         load::create_indexes(
             &txn,
-            opts.always_topology || (!opts.no_topology && topology::has_index(&txn, "input.")?),
+            opts.always_connectivity
+                || (!opts.no_connectivity && connectivity::has_index(&txn, "input.")?),
         )?;
 
         debug!("flushing {} ...", &opts.outfile);
         txn.commit()?
     }
 
-    load::summary(&db)?;
+    if log_enabled!(log::Level::Debug) {
+        load::summary(&db)?;
+    }
     db.close().map_err(|(_, e)| e)?;
     if sub_segment_count == 0 {
         return Err(util::Error::EmptyGfab);
@@ -192,23 +195,30 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
             db.prepare("INSERT OR REPLACE INTO temp.start_segments(segment_id) VALUES(?)")?
         } else {
             // GRI query
-            db.prepare(
+            db.prepare(&format!(
                 "INSERT OR REPLACE INTO temp.start_segments(segment_id)
-                 SELECT segment_id FROM gfa1_segment_mapping
-                    WHERE _rowid_ in genomic_range_rowids(
-                        'gfa1_segment_mapping',
-                        parse_genomic_range_sequence(?1),
-                        parse_genomic_range_begin(?1),
-                        parse_genomic_range_end(?1))",
-            )?
+                     SELECT segment_id FROM {}gfa1_segment_mapping
+                        WHERE _rowid_ in genomic_range_rowids(
+                            '{}gfa1_segment_mapping',
+                            parse_genomic_range_sequence(?1),
+                            parse_genomic_range_begin(?1),
+                            parse_genomic_range_end(?1))",
+                input_schema, input_schema
+            ))?
         };
-        let mut find_segment_by_name =
-            db.prepare("SELECT segment_id FROM gfa1_segment_meta WHERE name=?")?;
-        let mut find_path_by_name = db.prepare("SELECT path_id FROM gfa1_path WHERE name=?")?;
-        let mut insert_path = db.prepare(
+        let mut find_segment_by_name = db.prepare(&format!(
+            "SELECT segment_id FROM {}gfa1_segment_meta WHERE name=?",
+            input_schema
+        ))?;
+        let mut find_path_by_name = db.prepare(&format!(
+            "SELECT path_id FROM {}gfa1_path WHERE name=?",
+            input_schema
+        ))?;
+        let mut insert_path = db.prepare(&format!(
             "INSERT OR REPLACE INTO temp.start_segments(segment_id)
-             SELECT segment_id FROM gfa1_path_element WHERE path_id=?",
-        )?;
+             SELECT segment_id FROM {}gfa1_path_element WHERE path_id=?",
+            input_schema
+        ))?;
         for segment in &opts.segments {
             if opts.reference {
                 if insert_segment.execute(params![segment])? < 1 {
@@ -279,10 +289,20 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
             warn!("--connected overriding --radius[-bp]");
         }
         // sub_segments = connected components including start_segments
-        let connected_sql = include_str!("query/connected.sql").to_string()
-            + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
-        debug!("computing connected component(s)...");
-        db.execute_batch(&connected_sql)?;
+        if connectivity::has_index(db, input_schema)? {
+            let connected_sql = format!(
+                "CREATE VIEW temp.sub_segments(segment_id) AS
+                    SELECT segment_id FROM gfa1_connectivity WHERE component_id IN
+                        (SELECT DISTINCT component_id FROM gfa1_connectivity
+                         WHERE segment_id IN temp.start_segments)"
+            );
+            db.execute_batch(&connected_sql)?;
+        } else {
+            warn!("input .gfab lacks connectivity index; discovering connected component(s) on-the-fly...");
+            let connected_sql = include_str!("query/connected.sql").to_string()
+                + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
+            db.execute_batch(&connected_sql)?;
+        }
     } else if let Some(radius) = opts.radius {
         if opts.radius_bp.is_some() {
             warn!("--radius overriding --radius-bp")

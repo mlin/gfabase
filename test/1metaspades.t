@@ -21,7 +21,7 @@ export TMPDIR=$(mktemp -d --tmpdir gfabase_metaspades_test_XXXXXX)
 zstd -dc test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa"
 
 # roundtrip it and check fidelity
-gfabase --verbose load --compress 1 --topology "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab"
+gfabase --verbose load --compress 1 "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab"
 is "$?" "0" "gfabase load"
 
 time gfabase view "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.roundtrip.gfa"
