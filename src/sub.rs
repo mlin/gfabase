@@ -292,9 +292,10 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
         if connectivity::has_index(db, input_schema)? {
             let connected_sql = format!(
                 "CREATE VIEW temp.sub_segments(segment_id) AS
-                    SELECT segment_id FROM gfa1_connectivity WHERE component_id IN
-                        (SELECT DISTINCT component_id FROM gfa1_connectivity
-                         WHERE segment_id IN temp.start_segments)"
+                    SELECT segment_id FROM {}gfa1_connectivity WHERE component_id IN
+                        (SELECT DISTINCT component_id FROM {}gfa1_connectivity
+                         WHERE segment_id IN temp.start_segments)",
+                input_schema, input_schema
             );
             db.execute_batch(&connected_sql)?;
         } else {
