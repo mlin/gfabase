@@ -15,7 +15,7 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
            SELECT to_segment FROM gfa1_link WHERE from_segment = ?1",
     )?;
     let mut insert = db.prepare(
-        "INSERT INTO gfa1_connectivity(segment_id,component_id,cuts_component) VALUES(?,?,?)",
+        "INSERT INTO gfa1_connectivity(segment_id,component_id,is_cutpoint) VALUES(?,?,?)",
     )?;
 
     // traverse DFS forest to discover connected components
@@ -50,7 +50,7 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
 }
 
 // DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
-// component, also marking cuts_component therein. https://cp-algorithms.com/graph/cutpoints.html
+// component, also marking is_cutpoint therein. https://cp-algorithms.com/graph/cutpoints.html
 // Return nonempty segment ID set iff the connected component contains at least two segments.
 
 // cutpoint algo state for each discovered segment
@@ -61,7 +61,7 @@ struct DfsSegmentState {
     // first reach segment)
     t_low: u64,
     // marked true once this segment is a proven cut point
-    cuts_component: bool,
+    is_cutpoint: bool,
 }
 // stack frame for iterative DFS
 struct DfsStackFrame {
@@ -94,7 +94,7 @@ fn component_dfs(
             let mut segment_state = DfsSegmentState {
                 t_in: timestamp,
                 t_low: timestamp,
-                cuts_component: false,
+                is_cutpoint: false,
             };
             // enumerate segment's neighborhood (except itself & the predecessor)
             let mut neighbors_cursor = neighbors.query(params!(frame.segment))?;
@@ -136,7 +136,7 @@ fn component_dfs(
                 // If nothing that we visited earlier is reachable via this neighbor, then deleting
                 // segment would disconnect neighbor -- thus cutting the current component.
                 if neighbor_low >= segment_state.t_in {
-                    segment_state.cuts_component = true;
+                    segment_state.is_cutpoint = true;
                 }
             } else {
                 start_degree += 1;
@@ -148,15 +148,15 @@ fn component_dfs(
     let mut segments = HashSet::new();
     if timestamp >= 2 {
         for (segment_id, segment_state) in state.iter() {
-            let cuts_component = if *segment_id != start_segment_id {
-                segment_state.cuts_component
+            let is_cutpoint = if *segment_id != start_segment_id {
+                segment_state.is_cutpoint
             } else {
                 start_degree > 1
             };
             insert.execute(params!(
                 segment_id,
                 component_id,
-                if cuts_component { 1 } else { 0 }
+                if is_cutpoint { 1 } else { 0 }
             ))?;
             segments.insert(*segment_id);
         }

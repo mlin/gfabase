@@ -31,30 +31,31 @@ pub struct Opts {
     #[clap(long)]
     pub connected: bool,
 
-    /// Follow links from the specified segment(s) out to given radius
+    /// Follow links from specified segment(s) out to given radius
     #[clap(long)]
     pub radius: Option<u32>,
 
-    /// Follow links from the specified segment(s) out to given radius, each link weighted by
-    /// segment sequence length
+    /// Follow links from specified segment(s) out to given radius, each link weighted by segment
+    /// sequence length
     #[clap(long)]
     pub radius_bp: Option<u32>,
+
+    /// Follow links from specified segment(s), but don't cross through graph cutpoints (combine
+    /// with --radius or --radius-bp to stop at N'th cutpoint)
+    #[clap(long)]
+    pub to_cutpoints: bool,
 
     /// Write .gfa instead of .gfab to outfile (- for stdout)
     #[clap(long)]
     pub view: bool,
 
-    /// Index connectivity even if source .gfab doesn't
-    #[clap(long)]
-    pub always_connectivity: bool,
-
-    /// Skip indexing connectivity even if source .gfab does so
-    #[clap(long)]
-    pub no_connectivity: bool,
-
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
+
+    /// Omit index of subgraph.gfab connectivity
+    #[clap(long)]
+    pub no_connectivity: bool,
 
     /// compression level (-5 to 22) for output .gfab
     #[clap(long, default_value = "6")]
@@ -119,11 +120,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
             txn.execute_batch(include_str!("query/sub.sql"))?;
         }
 
-        load::create_indexes(
-            &txn,
-            opts.always_connectivity
-                || (!opts.no_connectivity && connectivity::has_index(&txn, "input.")?),
-        )?;
+        load::create_indexes(&txn, !opts.no_connectivity)?;
 
         debug!("flushing {} ...", &opts.outfile);
         txn.commit()?
@@ -284,9 +281,22 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
         }
     }
 
+    let mut opts_radius = opts.radius;
+    if opts.to_cutpoints {
+        if !connectivity::has_index(db, input_schema)? {
+            panic!("input .gfab lacks connectivity index required for --to-cutpoints")
+        }
+        if opts_radius.is_none() && opts.radius_bp.is_none() {
+            opts_radius = Some(1)
+        }
+    }
+
     if opts.connected {
         if opts.radius.is_some() || opts.radius_bp.is_some() {
             warn!("--connected overriding --radius[-bp]");
+        }
+        if opts.to_cutpoints {
+            warn!("--connected overriding --to-cutpoints");
         }
         // sub_segments = connected components including start_segments
         if connectivity::has_index(db, input_schema)? {
@@ -309,13 +319,13 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
             db.execute_batch(&connected_sql)?;
         }
-    } else if let Some(radius) = opts.radius {
+    } else if let Some(radius) = opts_radius {
         if opts.radius_bp.is_some() {
             warn!("--radius overriding --radius-bp")
         }
-        connected_radius(db, radius as i64, false)?;
+        connected_radius(db, input_schema, radius as i64, false, opts.to_cutpoints)?;
     } else if let Some(radius_bp) = opts.radius_bp {
-        connected_radius(db, radius_bp as i64, true)?;
+        connected_radius(db, input_schema, radius_bp as i64, true, opts.to_cutpoints)?;
     } else {
         // sub_segments = start_segments
         db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
@@ -329,20 +339,25 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
 // reached by following it. Then `radius` is roughly a bp distance (but It's Complicated, because
 // this doesn't consider the direction of the links).
 //
-// Unlike querying for the full connected component, an efficient algorithm uses a bit more state
-// than is convenient to track in SQL using WITH RECURSIVE..., so we do it in code & memory here.
+// Also, we might only weight links reaching graph cutpoints. "Stopping" at a cutpoint means not
+// "crossing through" the cutpoint segment -- we still follow the cutpoint's other links going in
+// the same direction (relative to the cutpoint) as the link through which we arrived.
 //
 //  IN: segment IDs in temp.start_segments
 // OUT: segment IDs in temp.connected_segments
 fn connected_radius(
     db: &rusqlite::Connection,
+    input_schema: &str,
     radius: i64,
     sequence_length_weighted: bool,
+    to_cutpoints: bool,
 ) -> Result<()> {
-    // max-heap on (remaining_radius, 0-segment_id)
-    let mut queue: BinaryHeap<(i64, i64)> = BinaryHeap::new();
-    // segment_id -> max_radius (of completed visits)
-    let mut visited: BTreeMap<i64, i64> = BTreeMap::new();
+    // max-heap on (remaining_radius, 0-segment_id, reverse_link)
+    // reverse_link tracks the direction of the link we followed to get to segment (true = segment
+    // is the 'from' end of the link) -- relevant only in cutpoint mode
+    let mut queue: BinaryHeap<(i64, i64, bool)> = BinaryHeap::new();
+    // (segment_id,reverse_link) -> max remaining_radius of completed visits
+    let mut visited: BTreeMap<(i64, bool), i64> = BTreeMap::new();
 
     // fill queue with starting segments & initial radius
     {
@@ -350,50 +365,103 @@ fn connected_radius(
         let mut start_segments_cursor = start_segments.query(NO_PARAMS)?;
         while let Some(row) = start_segments_cursor.next()? {
             let segment_id: i64 = row.get(0)?;
-            queue.push((radius, 0 - segment_id));
+            queue.push((radius, 0 - segment_id, false));
         }
     }
 
     {
-        // query for incoming & outgoing links of segment, and "weight" of each link (either
+        // queries for incoming & outgoing links of segment, and "weight" of each link (either
         // sequence length or 1)
-        let mut links_query = db.prepare(
-            if sequence_length_weighted {
-                "   SELECT from_segment, sequence_length
-                    FROM gfa1_link LEFT JOIN gfa1_segment_meta ON from_segment = gfa1_segment_meta.segment_id
-                    WHERE to_segment = ?1
-                UNION ALL
-                    SELECT to_segment, sequence_length
-                    FROM gfa1_link LEFT JOIN gfa1_segment_meta ON to_segment = gfa1_segment_meta.segment_id
-                    WHERE from_segment = ?1"
-            } else {
-                "   SELECT from_segment, 1 FROM gfa1_link WHERE to_segment = ?1
-                UNION ALL
-                    SELECT to_segment, 1 FROM gfa1_link WHERE from_segment = ?1"
-            }
-        )?;
+        let outgoing_links_sql = if sequence_length_weighted {
+            format!(
+                "SELECT to_segment, sequence_length
+                 FROM {s}gfa1_link LEFT JOIN {s}gfa1_segment_meta ON to_segment = segment_id
+                 WHERE from_segment = ?",
+                s = input_schema
+            )
+        } else {
+            format!(
+                "SELECT to_segment, 1 FROM {}gfa1_link WHERE from_segment = ?",
+                input_schema
+            )
+        };
+        let mut outgoing_links_query = db.prepare(&outgoing_links_sql)?;
+        let incoming_links_sql = if sequence_length_weighted {
+            format!(
+                "SELECT from_segment, sequence_length
+                 FROM {s}gfa1_link LEFT JOIN {s}gfa1_segment_meta ON from_segment = segment_id
+                 WHERE to_segment = ?",
+                s = input_schema
+            )
+        } else {
+            format!(
+                "SELECT from_segment, 1 FROM {}gfa1_link WHERE to_segment = ?",
+                input_schema
+            )
+        };
+        let mut incoming_links_query = db.prepare(&incoming_links_sql)?;
+        let mut is_cutpoint_query = db.prepare(&format!(
+            "SELECT is_cutpoint FROM {}gfa1_connectivity WHERE segment_id = ?",
+            input_schema
+        ))?;
 
         // take from queue until empty
-        while let Some((remaining_radius, neg_segment_id)) = queue.pop() {
+        while let Some((remaining_radius, neg_segment_id, reverse_link)) = queue.pop() {
             let segment = 0 - neg_segment_id;
+            let is_cutpoint = to_cutpoints
+                && (is_cutpoint_query
+                    .query_row(params![segment], |row| row.get(0))
+                    .optional()?
+                    .unwrap_or(0 as i64)
+                    != 0);
 
             // skip if we've already visited segment with at least remaining_radius
             if visited
-                .get(&segment)
+                .get(&(segment, to_cutpoints && reverse_link))
                 .map_or(false, |&visited_radius| visited_radius >= remaining_radius)
             {
                 continue;
             }
             // record this visit
-            visited.insert(segment, remaining_radius);
+            visited.insert((segment, to_cutpoints && reverse_link), remaining_radius);
 
             if remaining_radius > 0 {
                 // if we still have radius, enqueue the segment's neighbors with appropriate deduction
-                let mut links_cursor = links_query.query(params![segment])?;
+                let mut links_cursor = outgoing_links_query.query(params![segment])?;
                 while let Some(row) = links_cursor.next()? {
                     let neighbor: i64 = row.get(0)?;
-                    let weight: i64 = row.get(1)?;
-                    queue.push((remaining_radius - weight, 0 - neighbor));
+                    let weight = if !to_cutpoints || is_cutpoint {
+                        row.get(1)?
+                    } else {
+                        0 as i64
+                    };
+                    queue.push((remaining_radius - weight, 0 - neighbor, false));
+                }
+                links_cursor = incoming_links_query.query(params![segment])?;
+                while let Some(row) = links_cursor.next()? {
+                    let neighbor: i64 = row.get(0)?;
+                    let weight = if !to_cutpoints || is_cutpoint {
+                        row.get(1)?
+                    } else {
+                        0 as i64
+                    };
+                    queue.push((remaining_radius - weight, 0 - neighbor, true));
+                }
+            } else if is_cutpoint {
+                // follow only the links with the same direction according to reverse_link
+                let mut links_cursor = if reverse_link {
+                    outgoing_links_query.query(params![segment])?
+                } else {
+                    incoming_links_query.query(params![segment])?
+                };
+                while let Some(row) = links_cursor.next()? {
+                    let neighbor: i64 = row.get(0)?;
+                    let weight = if !to_cutpoints || is_cutpoint {
+                        row.get(1)?
+                    } else {
+                        0 as i64
+                    };
+                    queue.push((remaining_radius - weight, 0 - neighbor, !reverse_link));
                 }
             }
         }
@@ -403,7 +471,7 @@ fn connected_radius(
     {
         db.execute_batch("CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY)")?;
         let mut insert_sub = db.prepare("INSERT INTO temp.sub_segments(segment_id) VALUES(?)")?;
-        for segment in visited.keys() {
+        for (segment, _) in visited.keys() {
             insert_sub.execute(params![segment])?;
         }
     }

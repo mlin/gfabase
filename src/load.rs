@@ -578,9 +578,9 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
             "SELECT count(component_id), max(size), sum(size), sum(cuts), sum(bp), sum(cuts_bp) FROM
                 (SELECT
                         component_id, count(segment_id) AS size,
-                        sum(cuts_component) AS cuts,
+                        sum(is_cutpoint) AS cuts,
                         sum(sequence_length) AS bp,
-                        sum(cuts_component*sequence_length) AS cuts_bp
+                        sum(is_cutpoint*sequence_length) AS cuts_bp
                  FROM gfa1_connectivity INNER JOIN gfa1_segment_meta USING(segment_id)
                  GROUP BY component_id)",
             NO_PARAMS,
@@ -599,7 +599,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                     );
                     debug!("\t{} segments in largest component", maxsize);
                     debug!(
-                        "\t{} of the segments are cut vertices, totaling {} bp",
+                        "\t{} of the segments are cutpoints, totaling {} bp",
                         cuts, cuts_bp
                     )
                 } else {
@@ -608,6 +608,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                 Ok(())
             },
         )?
+        // TODO: warn if there exists a connected component with multiple sources and/or sinks
     }
     Ok(())
 }
