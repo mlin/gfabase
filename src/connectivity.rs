@@ -1,45 +1,53 @@
+use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 use std::cmp;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::util::Result;
 
 pub fn index(db: &rusqlite::Connection) -> Result<()> {
     db.execute_batch(include_str!("schema/GFA1.connectivity.sql"))?;
 
-    let mut visited_query = db.prepare("SELECT 1 from gfa1_connectivity WHERE segment_id = ?")?;
     let mut neighbors = db.prepare(
         // remove directionality from links
-        "  SELECT from_segment FROM gfa1_link WHERE to_segment = ?1
+        "  SELECT from_segment FROM gfa1_link WHERE to_segment = ?1 AND from_segment != ?1
          UNION
-           SELECT to_segment FROM gfa1_link WHERE from_segment = ?1",
+           SELECT to_segment FROM gfa1_link WHERE from_segment = ?1 AND to_segment != ?1",
     )?;
     let mut insert = db.prepare(
         "INSERT INTO gfa1_connectivity(segment_id,component_id,is_cutpoint) VALUES(?,?,?)",
     )?;
 
+    let mut visited_query = db.prepare("SELECT 1 from gfa1_connectivity WHERE segment_id = ?")?;
+    // use a bloom filter in front of visited_query
+    let approx_segment_count: i64 = db.query_row(
+        "SELECT coalesce(max(segment_id),100000) FROM gfa1_segment_meta",
+        NO_PARAMS,
+        |row| row.get(0),
+    )?;
+    let mut visited_bloom = Bloom::new_for_fp_rate(approx_segment_count as usize, 0.05);
+
     // traverse DFS forest to discover connected components
     let mut component_id: i64 = 1;
-    let mut prev_component = HashSet::new();
     let mut all_segments = db.prepare("SELECT segment_id FROM gfa1_segment_meta")?;
     let mut all_segments_cursor = all_segments.query(NO_PARAMS)?;
     while let Some(segrow) = all_segments_cursor.next()? {
         let segment_id: i64 = segrow.get(0)?;
-        let mut visited = prev_component.contains(&segment_id);
-        if !visited  // we used prev_component like a cache to elide many visited_query ops
+        let visited = visited_bloom.check(&segment_id)
             && visited_query
                 .query_row(params!(segment_id), |_| Ok(()))
                 .optional()?
-                .is_some()
+                .is_some();
+        if !visited
+            && component_dfs(
+                component_id,
+                segment_id,
+                &mut neighbors,
+                &mut insert,
+                &mut visited_bloom,
+            )?
         {
-            visited = true;
-        }
-        if !visited {
-            let component = component_dfs(component_id, segment_id, &mut neighbors, &mut insert)?;
-            if !component.is_empty() {
-                component_id += 1;
-                prev_component = component;
-            }
+            component_id += 1;
         }
     }
 
@@ -51,7 +59,7 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
 
 // DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
 // component, also marking is_cutpoint therein. https://cp-algorithms.com/graph/cutpoints.html
-// Return nonempty segment ID set iff the connected component contains at least two segments.
+// Return true iff the connected component contains at least two segments.
 
 // cutpoint algo state for each discovered segment
 struct DfsSegmentState {
@@ -63,106 +71,103 @@ struct DfsSegmentState {
     // marked true once this segment is a proven cut point
     is_cutpoint: bool,
 }
-// stack frame for iterative DFS
-struct DfsStackFrame {
-    // segment to visit
-    segment: i64,
-    // the predecessor segment; undefined when segment == start_segment_id
-    pred: i64,
-    // None on first reaching segment, Some(neighbor) when we return after searching a neighbor
-    maybe_neighbor: Option<i64>,
+// stack frames for iterative DFS
+enum DfsStackFrame {
+    Arrive { segment: i64, parent: i64 },
+    Return { segment: i64, child: i64 },
 }
 fn component_dfs(
     component_id: i64,
     start_segment_id: i64,
     neighbors: &mut rusqlite::Statement,
     insert: &mut rusqlite::Statement,
-) -> Result<HashSet<i64>> {
+    visited_bloom: &mut Bloom<i64>,
+) -> Result<bool> {
     let mut timestamp: u64 = 0;
     let mut state: BTreeMap<i64, DfsSegmentState> = BTreeMap::new();
     let mut start_degree: u64 = 0;
 
-    let mut stack = vec![DfsStackFrame {
+    let mut stack = vec![DfsStackFrame::Arrive {
         segment: start_segment_id,
-        pred: i64::MIN,
-        maybe_neighbor: None,
+        parent: i64::MIN, // undefined for start segment
     }];
     while let Some(frame) = stack.pop() {
-        if frame.maybe_neighbor.is_none() {
-            // first arrival at segment
-            timestamp += 1;
-            let mut segment_state = DfsSegmentState {
-                t_in: timestamp,
-                t_low: timestamp,
-                is_cutpoint: false,
-            };
-            // enumerate segment's neighborhood (except itself & the predecessor)
-            let mut neighbors_cursor = neighbors.query(params!(frame.segment))?;
-            while let Some(nrow) = neighbors_cursor.next()? {
-                let neighbor: i64 = nrow.get(0)?;
-                if neighbor == frame.segment
-                    || (frame.segment != start_segment_id && neighbor == frame.pred)
-                {
-                    continue;
-                }
-                // if we already visited this neighbor,
-                if let Some(neighbor_state) = state.get(&neighbor) {
-                    // record the earliest timestamp of such visits
-                    segment_state.t_low = cmp::min(segment_state.t_low, neighbor_state.t_in)
+        match frame {
+            DfsStackFrame::Arrive { segment, parent } => {
+                if let Some(t_in) = state.get(&segment).map(|segment_state| segment_state.t_in) {
+                    // already visited this segment; reduce parent t_low to the first such visit
+                    assert!(timestamp > 1);
+                    let ref mut pt_state = state.get_mut(&parent).unwrap();
+                    pt_state.t_low = cmp::min(pt_state.t_low, t_in)
                 } else {
-                    // schedule our return to segment after...
-                    stack.push(DfsStackFrame {
-                        segment: frame.segment,
-                        pred: frame.pred,
-                        maybe_neighbor: Some(neighbor),
-                    });
-                    // ...searching the neighbor next
-                    stack.push(DfsStackFrame {
-                        segment: neighbor,
-                        pred: frame.segment,
-                        maybe_neighbor: None,
-                    });
+                    // first arrival at segment
+                    timestamp += 1;
+                    state.insert(
+                        segment,
+                        DfsSegmentState {
+                            t_in: timestamp,
+                            t_low: timestamp,
+                            is_cutpoint: false,
+                        },
+                    );
+                    // schedule return to parent after...
+                    if segment != start_segment_id {
+                        stack.push(DfsStackFrame::Return {
+                            segment: parent,
+                            child: segment,
+                        });
+                    }
+                    // visiting segment's other neighbors
+                    let mut neighbors_cursor = neighbors.query(params!(segment))?;
+                    while let Some(nrow) = neighbors_cursor.next()? {
+                        let neighbor: i64 = nrow.get(0)?;
+                        if segment != start_segment_id && neighbor == parent {
+                            continue;
+                        }
+                        stack.push(DfsStackFrame::Arrive {
+                            segment: neighbor,
+                            parent: segment,
+                        })
+                    }
                 }
             }
-            state.insert(frame.segment, segment_state);
-        } else {
-            // just finished searching one of segment's neighbors
-            let neighbor = frame.maybe_neighbor.unwrap();
-            // record the earliest timestamp seen amongst/beneath them
-            let neighbor_low = state.get(&neighbor).unwrap().t_low;
-            let ref mut segment_state = state.get_mut(&frame.segment).unwrap(); // to update in-place
-            segment_state.t_low = cmp::min(segment_state.t_low, neighbor_low);
-            if frame.segment != start_segment_id {
-                // If nothing that we visited earlier is reachable via this neighbor, then deleting
-                // segment would disconnect neighbor -- thus cutting the current component.
-                if neighbor_low >= segment_state.t_in {
-                    segment_state.is_cutpoint = true;
+            DfsStackFrame::Return { segment, child } => {
+                // returning to segment after completing (what turned out to be) the first visit
+                // to child; reduce segment's t_low to child's
+                let child_low = state.get(&child).unwrap().t_low;
+                let ref mut segment_state = state.get_mut(&segment).unwrap();
+                segment_state.t_low = cmp::min(segment_state.t_low, child_low);
+                if segment != start_segment_id {
+                    // If none of segment's ancestors were reachable via child, then deleting
+                    // segment would disconnect child.
+                    if child_low >= segment_state.t_in {
+                        segment_state.is_cutpoint = true;
+                    }
+                } else {
+                    start_degree += 1;
                 }
-            } else {
-                start_degree += 1;
             }
         }
     }
 
     // dump results into gfa1_connectivity
-    let mut segments = HashSet::new();
-    if timestamp >= 2 {
-        for (segment_id, segment_state) in state.iter() {
-            let is_cutpoint = if *segment_id != start_segment_id {
-                segment_state.is_cutpoint
-            } else {
-                start_degree > 1
-            };
-            insert.execute(params!(
-                segment_id,
-                component_id,
-                if is_cutpoint { 1 } else { 0 }
-            ))?;
-            segments.insert(*segment_id);
-        }
+    if timestamp < 2 {
+        return Ok(false);
     }
-
-    Ok(segments)
+    for (segment_id, segment_state) in state.iter() {
+        let is_cutpoint = if *segment_id != start_segment_id {
+            segment_state.is_cutpoint
+        } else {
+            start_degree > 1
+        };
+        insert.execute(params!(
+            segment_id,
+            component_id,
+            if is_cutpoint { 1 } else { 0 },
+        ))?;
+        visited_bloom.set(segment_id);
+    }
+    Ok(true)
 }
 
 pub fn has_index(db: &rusqlite::Connection, schema: &str) -> Result<bool> {

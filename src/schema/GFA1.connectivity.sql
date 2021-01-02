@@ -4,8 +4,7 @@ CREATE TABLE gfa1_connectivity(
     segment_id INTEGER PRIMARY KEY
         REFERENCES gfa1_segment_meta(segment_id),
     component_id INTEGER NOT NULL,
-    is_cutpoint INTEGER NOT NULL  -- {0,1}: 1 iff deleting this segment (& links touching it) would
-                                  -- cut its connected component into two or more
+    is_cutpoint INTEGER NOT NULL -- {0,1}
 );
 
 -- created in code:

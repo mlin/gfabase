@@ -96,6 +96,32 @@ pub fn main(opts: &Opts) -> Result<()> {
     if log_enabled!(log::Level::Debug) {
         summary(&db)?;
     }
+    if !opts.no_connectivity {
+        db.query_row(
+            "SELECT count(*) FROM (SELECT 1
+             FROM
+                (SELECT
+                    segment_id, component_id,
+                    -- is_source: segment has no incoming links (since we're processing connected
+                    -- components of >=2 segments, it must therefore have outgoing link(s))
+                    CASE WHEN EXISTS (SELECT 1 FROM gfa1_link WHERE to_segment = segment_id)
+                         THEN 0 ELSE 1 END is_source,
+                    -- is_sink: segment has no outgoing links
+                    CASE WHEN EXISTS (SELECT 1 FROM gfa1_link WHERE from_segment = segment_id)
+                         THEN 0 ELSE 1 END is_sink
+                    FROM gfa1_connectivity)
+              GROUP BY component_id
+              HAVING sum(is_source) > 1 OR sum(is_sink) > 1)",
+              NO_PARAMS,
+              |row| {
+                  let n: i64 = row.get(0)?;
+                  if n > 0 {
+                      warn!("detected {} connected component(s) with multiple distinct sources and/or sinks; cutpoint queries may yield unexpected results", n)
+                  }
+                  Ok(())
+              }
+        ).optional()?;
+    }
     db.close().map_err(|(_, e)| e)?;
     if records_processed > 0 {
         info!("🗹 done");
@@ -607,8 +633,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                 }
                 Ok(())
             },
-        )?
-        // TODO: warn if there exists a connected component with multiple sources and/or sinks
+        )?;
     }
     Ok(())
 }

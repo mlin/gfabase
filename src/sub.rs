@@ -2,7 +2,7 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, log_enabled, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
-use std::collections::{BTreeMap, BinaryHeap};
+use std::collections::{BTreeMap, BinaryHeap, HashMap};
 
 use crate::util::Result;
 use crate::{bad_command, connectivity, load, util, view};
@@ -354,10 +354,12 @@ fn connected_radius(
 ) -> Result<()> {
     // max-heap on (remaining_radius, 0-segment_id, reverse_link)
     // reverse_link tracks the direction of the link we followed to get to segment (true = segment
-    // is the 'from' end of the link) -- relevant only in cutpoint mode
+    // is the 'from' end of the link)
     let mut queue: BinaryHeap<(i64, i64, bool)> = BinaryHeap::new();
     // (segment_id,reverse_link) -> max remaining_radius of completed visits
+    // reverse_link may be true only for cutpoints
     let mut visited: BTreeMap<(i64, bool), i64> = BTreeMap::new();
+    let mut cutpoints: HashMap<i64, bool> = HashMap::new();
 
     // fill queue with starting segments & initial radius
     {
@@ -409,21 +411,27 @@ fn connected_radius(
         while let Some((remaining_radius, neg_segment_id, reverse_link)) = queue.pop() {
             let segment = 0 - neg_segment_id;
             let is_cutpoint = to_cutpoints
-                && (is_cutpoint_query
-                    .query_row(params![segment], |row| row.get(0))
-                    .optional()?
-                    .unwrap_or(0 as i64)
-                    != 0);
+                && if let Some(&known) = cutpoints.get(&segment) {
+                    known
+                } else {
+                    let ans = is_cutpoint_query
+                        .query_row(params![segment], |row| row.get(0))
+                        .optional()?
+                        .unwrap_or(0 as i64)
+                        != 0;
+                    cutpoints.insert(segment, ans);
+                    ans
+                };
 
             // skip if we've already visited segment with at least remaining_radius
             if visited
-                .get(&(segment, to_cutpoints && reverse_link))
+                .get(&(segment, is_cutpoint && reverse_link))
                 .map_or(false, |&visited_radius| visited_radius >= remaining_radius)
             {
                 continue;
             }
             // record this visit
-            visited.insert((segment, to_cutpoints && reverse_link), remaining_radius);
+            visited.insert((segment, is_cutpoint && reverse_link), remaining_radius);
 
             if remaining_radius > 0 {
                 // if we still have radius, enqueue the segment's neighbors with appropriate deduction
