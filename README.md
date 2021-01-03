@@ -66,7 +66,7 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 
 * `--cutpoints 1` finds the subgraph connected to the command-line segments *without* crossing a cutpoint
 * `--cutpoints N` finds the subgraph connected while crossing *less than N* cutpoints
-* `--cutpoints N --cutpoints-nt L` *id.* but only count toward *N*, cutpoint segments at least *L* nucleotides long
+* `--cutpoints N --cutpoints-nt L` *id.* but only cutpoint segments at least *L* nucleotides long count toward *N*
 
 ### Building from source
 
