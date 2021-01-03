@@ -1,3 +1,10 @@
+// Connectivity index: at the end of the load process, traverse the DFS forest to discover
+// connected components (treating the segment graph as undirected) and store a relation table with
+// components (of >=2 segments) and the segments therein. Additionally, the table annotates which
+// segments are "cutpoints" whose individual deletion would increase the number of connected
+// components (again, undirected). The connected components and their cutpoints are all found in
+// one DFS forest traversal.
+
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 use std::cmp;
