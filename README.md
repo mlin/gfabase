@@ -33,7 +33,7 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 ./gfabase view chrY.gfab | less -S
 
 # starting from the segments constituting a megabase of chr22, expand to the connected subgraph
-# without crossing "cutpoints" -- further info below
+# without crossing "cutpoints" -- defined below
 ./gfabase sub chr22_chrY.gfab - --view --range --cutpoints 1 chr22:11,000,000-12,000,000 | less -S
 
 ```
@@ -68,7 +68,7 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 * `--cutpoints N` finds the subgraph connected while crossing *at most N-1* cutpoints
 * `--cutpoints N --cutpoints-nt L` *id.* but only cutpoint segments at least *L* nucleotides long count toward *N*
 
-*Fine print: you may get a bit more than you asked for; because the cutpoints are precomputed from an undirected segment graph, some repeat and inversion motifs are considered possible detours that aren't actually.*
+<sup>Fine print: you may get a bit more than you asked for; because the cutpoints are precomputed from an undirected segment graph, some repeat and inversion motifs are considered possible detours that really aren't.</sup>
 
 ### Building from source
 
@@ -83,4 +83,6 @@ export RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"
 cargo build --release
 ```
 
-Then find the executable `target/release/gfabase`. <small>The `RUSTFLAGS` incantation makes it look for shared libraries alongside in the same directory before the usual system paths (useful for deploying a newer SQLite, as shown above).</small>
+Then find the executable `target/release/gfabase`.
+
+<sup>The `RUSTFLAGS` incantation makes it look for shared libraries alongside in the same directory before the usual system paths (useful for bundling SQLite when needed).</sup>

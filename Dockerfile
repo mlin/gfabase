@@ -1,4 +1,4 @@
-# Builds gfabase in older environment to maximize portability
+# Builds gfabase and SQLite in older OS to maximize portability
 FROM ubuntu:16.04
 
 ARG sqlite_version=3340000
@@ -7,6 +7,27 @@ ARG target_cpu=haswell
 
 ENV CFLAGS="-march=${target_cpu} -O3"
 ENV RUSTFLAGS="-C target-cpu=${target_cpu} -C link-args=-Wl,-rpath,\$ORIGIN"
+# https://www.sqlite.org/compile.html
+ENV SQLITE_CFLAGS="\
+        -DSQLITE_ENABLE_LOAD_EXTENSION \
+        -DSQLITE_USE_URI \
+        -DSQLITE_DQS=0 \
+        -DSQLITE_LIKE_DOESNT_MATCH_BLOBS \
+        -DSQLITE_OMIT_SHARED_CACHE \
+        -DSQLITE_OMIT_DEPRECATED \
+        -DSQLITE_DEFAULT_MEMSTATUS=0 \
+        -DSQLITE_MAX_EXPR_DEPTH=0 \
+        -DSQLITE_ENABLE_NULL_TRIM \
+        -DSQLITE_USE_ALLOCA \
+        -DSQLITE_HAVE_ISNAN \
+        -DSQLITE_ENABLE_UPDATE_DELETE_LIMIT \
+        -DSQLITE_ENABLE_COLUMN_METADATA \
+        -DSQLITE_ENABLE_DBSTAT_VTAB \
+        -DSQLITE_ENABLE_FTS5 \
+        -DSQLITE_ENABLE_RTREE \
+        -DSQLITE_ENABLE_PREUPDATE_HOOK \
+        -DSQLITE_ENABLE_SESSION \
+"
 
 # apt
 RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
@@ -19,8 +40,8 @@ WORKDIR /work
 RUN wget -nv https://www.sqlite.org/2020/sqlite-amalgamation-${sqlite_version}.zip \
         && unzip -o sqlite-amalgamation-${sqlite_version}.zip
 WORKDIR /work/sqlite-amalgamation-${sqlite_version}
-RUN gcc -shared -o libsqlite3.so.0 -fPIC -shared -Wl,-soname,libsqlite3.so.0 -g ${CFLAGS} sqlite3.c
-RUN gcc -o sqlite3 -g ${CFLAGS} sqlite3.c shell.c -lpthread -ldl
+RUN gcc -shared -o libsqlite3.so.0 -fPIC -shared -Wl,-soname,libsqlite3.so.0 -g ${CFLAGS} ${SQLITE_CFLAGS} sqlite3.c
+RUN gcc -o sqlite3 -g ${CFLAGS} ${SQLITE_CFLAGS} sqlite3.c shell.c -lpthread -ldl -lm
 RUN cp libsqlite3.so.0 /usr/local/lib && cp *.h /usr/local/include && cp sqlite3 /usr/local/bin
 RUN ln -s /usr/local/lib/libsqlite3.so.0 /usr/local/lib/libsqlite3.so
 
@@ -43,4 +64,4 @@ WORKDIR /work/gfabase
 RUN rm -rf target/ && cargo build --release
 
 # some of the tests aren't convenient to run here, as they involve large downloads or python3.6+
-CMD bash -c "prove -v test/{1,2}*.t"
+CMD bash -c "sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0 && target/release/gfabase version && prove -v test/{1,2}*.t"
