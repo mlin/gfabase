@@ -1,0 +1,11 @@
+#!/bin/bash
+# Wrapper for cargo that first generates Cargo.toml from Cargo.toml.in, deriving crate version
+# from the most recent git tag, which must be SemVer-formatted (vX.Y.Z).
+set -e
+cd `dirname $0`
+
+revision="$(git describe --tags --dirty)"
+revision="${revision#v}"  # strip 'v' prefix
+
+sed "s/{{GIT_SEMVER}}/${revision}/" Cargo.toml.in > Cargo.toml
+cargo "$@"

@@ -80,9 +80,12 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 git clone https://github.com/mlin/gfabase.git
 cd gfabase
 export RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"
-cargo build --release
+./cargo build --release
 ```
 
 Then find the executable `target/release/gfabase`.
 
-<sup>The `RUSTFLAGS` incantation makes it look for shared libraries alongside in the same directory before the usual system paths (useful for bundling SQLite when needed).</sup>
+<sup>
+1. `./cargo` is a wrapper for `cargo` that generates `Cargo.toml` from `Cargo.toml.in` with the crate version derived from the git tag.
+2. The `RUSTFLAGS` incantation makes it look for shared libraries alongside in the same directory before the usual system paths (useful for bundling SQLite when needed).
+</sup>

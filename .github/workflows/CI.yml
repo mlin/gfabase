@@ -17,8 +17,8 @@ jobs:
         default: true
     - name: rust lint
       run: |
-        cargo check --no-default-features
-        cargo fmt -- --check
+        ./cargo check --no-default-features
+        ./cargo fmt -- --check
 
   test:
     runs-on: ubuntu-20.04
@@ -33,10 +33,10 @@ jobs:
         toolchain: stable
         default: true
     - name: build
-      run: cargo build --release
+      run: ./cargo build --release && target/release/gfabase version
     - name: test
       run: |
-        sudo apt-get install -y aria2 tabix
+        sudo apt-get install -y aria2 tabix zstd
         sudo pip3 install genomicsqlite
         prove -v test/*.t
 

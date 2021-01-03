@@ -1,8 +1,24 @@
 use genomicsqlite::ConnectionMethods;
 use rusqlite::OpenFlags;
 
+#[allow(unused)]
+mod buildinfo {
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 pub fn main() -> crate::util::Result<()> {
-    println!("gfabase v{}", env!("CARGO_PKG_VERSION"));
+    let timestamp = chrono::DateTime::parse_from_rfc2822(buildinfo::BUILT_TIME_UTC).unwrap();
+    println!(
+        "gfabase {} v{} {}",
+        buildinfo::PROFILE,
+        env!("CARGO_PKG_VERSION"),
+        timestamp.to_rfc3339()
+    );
+    println!(
+        "{} RUSTFLAGS='{}'",
+        buildinfo::RUSTC_VERSION,
+        option_env!("RUSTFLAGS").unwrap_or("")
+    );
 
     let tmp = tempfile::tempdir()?;
     let tmpdb = match tmp.path().join("version.genomicsqlite").to_str() {

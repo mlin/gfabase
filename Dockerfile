@@ -31,7 +31,7 @@ ENV SQLITE_CFLAGS="\
 
 # apt
 RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
-        build-essential zip wget aria2 tabix libtest-harness-perl
+        build-essential zip git-core wget aria2 tabix libtest-harness-perl
 
 RUN mkdir -p /work/gfabase
 
@@ -61,7 +61,7 @@ RUN ldconfig
 # cargo build
 ADD . /work/gfabase
 WORKDIR /work/gfabase
-RUN rm -rf target/ && cargo build --release
+RUN ./cargo clean && ./cargo build --release
 
 # some of the tests aren't convenient to run here, as they involve large downloads or python3.6+
 CMD bash -c "sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0 && target/release/gfabase version && prove -v test/{1,2}*.t"
