@@ -2,6 +2,7 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use json::object;
 use log::{debug, info, log_enabled, warn};
+use num_format::{Locale, ToFormattedString};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::{HashMap, HashSet};
 
@@ -97,6 +98,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         summary(&db)?;
     }
     if !opts.no_connectivity {
+        // TODO: refine to classify segment _sides_ as sources/sinks
         db.query_row(
             "SELECT count(*) FROM (SELECT 1
              FROM
@@ -584,7 +586,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
             NO_PARAMS,
             |ctr| ctr.get(0),
         )?;
-        debug!("\t{}\t{}", table, ct);
+        debug!("\t{}\t{}", table, ct.to_formatted_string(&Locale::en));
     }
     if let Some(e) = db
         .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
@@ -618,16 +620,16 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                     let cuts: i64 = row.get(3)?;
                     let bp: i64 = row.get(4)?;
                     let cuts_bp: i64 = row.get(5)?;
-                    debug!("\t{} connected components (of at least 2 segments)", count);
+                    debug!("\t{} connected components (of at least 2 segments)", count.to_formatted_string(&Locale::en));
                     debug!(
                         "\t{} segments in these components, totaling {} bp",
-                        sumsize, bp
+                        sumsize.to_formatted_string(&Locale::en), bp.to_formatted_string(&Locale::en)
                     );
-                    debug!("\t{} segments in largest component", maxsize);
                     debug!(
-                        "\t{} of the segments are cutpoints, totaling {} bp",
-                        cuts, cuts_bp
-                    )
+                        "\t{} cutpoint segments, totaling {} bp",
+                        cuts.to_formatted_string(&Locale::en), cuts_bp.to_formatted_string(&Locale::en)
+                    );
+                    debug!("\t{} segments in largest component", maxsize.to_formatted_string(&Locale::en))
                 } else {
                     warn!("graph has no links")
                 }

@@ -11,7 +11,7 @@ cd "$REPO"
 export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 
-plan tests 15
+plan tests 16
 
 cargo build --release
 is "$?" "0" "cargo build"
@@ -45,7 +45,7 @@ is `cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" | grep "^L" | wc -l` \
 # extract chr22 segments only
 gfabase sub \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" "${TMPDIR}/GRCh38-20-0.10b.chr22only.gfab" \
-    chr22:1-999999999 --reference
+    chr22:1-999999999 --range
 chr22_digest=$(cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" | grep chr22 | cut -f3 | LC_ALL=C sort | sha256sum)
 sub_chr22_digest=$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22only.gfab" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum)
 is "$sub_chr22_digest" "$chr22_digest" "chr22 reference segments"
@@ -53,28 +53,31 @@ is "$sub_chr22_digest" "$chr22_digest" "chr22 reference segments"
 # extract chr22 connected component
 gfabase sub \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" \
-    chr22:1-999999999 --reference --connected
+    chr22:1-999999999 --range --connected
 is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l)" "3319" "chr22-connected segments"
 is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l)" "4795" "chr22-connected links"
 
 # sub --view to stream GFA directly
 gfabase sub --view \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
-    chr22:1-999999999 --reference --connected \
+    chr22:1-999999999 --range --connected \
     > "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa"
 is "$(grep "^S" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "3319" "chr22-connected segments --view"
 is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "4795" "chr22-connected links --view"
 
-# sub --radius-bp
+# sub --cutpoints
 gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
-    chr22:11,000,000-12,000,000 --reference --radius-bp 100000 --view \
-    > "${TMPDIR}/radius.gfa"
-is $(cat "${TMPDIR}/radius.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
-   "fcbc6fd76fd6b4220aeeaad1772044ce923cc8e3d488bbcdf292c13eb668b40f" "sub --radius-bp segments"
-is $(cat "${TMPDIR}/radius.gfa" | grep "^L" | wc -l) "65" "sub --radius-bp link count"
+    --range --cutpoints 1 --view chr22:11,000,000-12,000,000 \
+    > "${TMPDIR}/megabase.gfa"
+is $(cat "${TMPDIR}/megabase.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
+   "17d49156acd0ccad3452fb938b932234132a5d31f25ce92e7c655bff0628c654" "sub --cutpoints segments"
+is $(cat "${TMPDIR}/megabase.gfa" | grep "^L" | wc -l) "56" "sub --cutpoints links"
 
-is "$(gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
-      chr22:15,000,000-15,000,001 --reference --radius-bp 999999999 --view | grep "^S" | wc -l)" \
-   "3319" "sub --radius-bp 999999999"
+gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" - \
+    --range --cutpoints 1 --cutpoints-nt 10000 --view chr22:11,000,000-12,000,000 \
+    > "${TMPDIR}/megabase10k.gfa"
+is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
+   "5ebd4b41cce8f4a99ea2b42d090315d43162f87482678ef3f1c70c65bcf5ae51" "sub --cutpoints-nt segments"
+is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^L" | wc -l) "59" "sub --cutpoints-nt links"
 
 rm -rf "$TMPDIR"
