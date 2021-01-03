@@ -28,13 +28,14 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 # or in one command:
 ./gfabase sub atcc_staggered.metaspades.gfab - --view --path NODE_2_length_747618_cov_15.708553_3 | less -S
 
-# from the rGFA graph, extract the subgraph starting from a certain megabase of chr22 and
-# traversing up to 100,000 bp of linked segments
-./gfabase sub chr22_chrY.gfab - --view --reference --radius-bp 100000 chr22:11,000,000-12,000,000 | less -S
-
-# extract the whole connected component associated with chrY
-./gfabase sub chr22_chrY.gfab chrY.gfab --reference --connected chrY:1-999,999,999
+# from the rGFA graph, extract the whole connected component associated with chrY
+./gfabase sub chr22_chrY.gfab chrY.gfab --range --connected chrY:1-999,999,999
 ./gfabase view chrY.gfab | less -S
+
+# starting from the segments constituting a megabase of chr22, expand to the connected subgraph
+# out to the nearest "cutpoints" -- further info below
+./gfabase sub chr22_chrY.gfab - --view --range --cutpoints 1 chr22:11,000,000-12,000,000 | less -S
+
 ```
 
 If we've also `pip3 install genomicsqlite`, then we can open a .gfab file in the SQLite interactive shell and poke around in SQL. (This does require up-to-date host SQLite and `sqlite3` shell.)
@@ -52,14 +53,20 @@ $ genomicsqlite chr22_chrY.gfab -readonly
 
 ### Segment mappings
 
-`gfabase load` currently understands two forms of linear mappings to make each segment discoverable by `gfabase sub --reference`,
+`gfabase load` currently understands two forms of linear mappings to make each segment discoverable by `gfabase sub --range`,
 
 1. The [rGFA tags](https://github.com/lh3/gfatools/blob/master/doc/rGFA.md) `SN:Z` and `SO:i` are present *and* the segment sequence length is known (from given sequence or `LN:i`)
 2. Segment tag `rr:Z` giving a browser-style range like `rr:Z:chr1:2,345-6,789`
 
-Notice that with `gfabase sub --reference --radius-bp N` you can usually extract the relevant subgraph given any segment with a "close enough" mapping.
-
 Soon we plan to make it easy to source the ranges directly from a mapper run on the segment sequences. Please send ideas.
+
+### Subgraph cutpoints
+
+Using `gfabase sub` to extract a set of segments or reference sequence range, we often want to get their "neighborhood" without having to load the whole connected component. The `.gfab` has an index of *cutpoints*: loosely, segments with no possible detours around them to get from one end of the chromosome to the other. These are natural stopping points for local subgraph extraction:
+
+* `--cutpoints 1` includes everything connected to the command-line-specified segments *without* crossing a cutpoint
+* `--cutpoints N` includes " crossing fewer than N cutpoints
+* `--cutpoints N --cutpoints-nt L` *id.* but only cutpoints with segment sequence at least `L` nucleotides count toward `N`
 
 ### Building from source
 
