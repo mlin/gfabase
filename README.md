@@ -33,7 +33,7 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 ./gfabase view chrY.gfab | less -S
 
 # starting from the segments constituting a megabase of chr22, expand to the connected subgraph
-# out to the nearest "cutpoints" -- further info below
+# without crossing "cutpoints" -- further info below
 ./gfabase sub chr22_chrY.gfab - --view --range --cutpoints 1 chr22:11,000,000-12,000,000 | less -S
 
 ```
@@ -62,11 +62,11 @@ Soon we plan to make it easy to source the ranges directly from a mapper run on 
 
 ### Subgraph cutpoints
 
-Using `gfabase sub` to extract a set of segments or reference sequence range, we often want to get their "neighborhood" without having to load the whole connected component. The `.gfab` has an index of *cutpoints*: loosely, segments with no possible detours around them to get from one end of the chromosome to the other. These are natural stopping points for local subgraph extraction:
+Using `gfabase sub` to extract a set or range of segments, we often want to get their "neighborhood" too, without having to load the whole connected component. The `.gfab` has an index of *cutpoints*: loosely, segments with no possible detours around them to get from one end of the chromosome to the other. These are natural stopping points for local subgraph extraction:
 
 * `--cutpoints 1` includes everything connected to the command-line-specified segments *without* crossing a cutpoint
-* `--cutpoints N` includes " crossing fewer than N cutpoints
-* `--cutpoints N --cutpoints-nt L` *id.* but only cutpoints with segment sequence at least `L` nucleotides count toward `N`
+* `--cutpoints N` includes everything connected while crossing *fewer than N* cutpoints
+* `--cutpoints N --cutpoints-nt L` *id.* but only count toward *N*, cutpoint segments at least *L* nucleotides long
 
 ### Building from source
 
