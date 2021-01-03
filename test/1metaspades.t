@@ -21,7 +21,7 @@ export TMPDIR=$(mktemp -d --tmpdir gfabase_metaspades_test_XXXXXX)
 zstd -dc test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa"
 
 # roundtrip it and check fidelity
-gfabase load --compress 1 "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab"
+gfabase --verbose load --compress 1 "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa" "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab"
 is "$?" "0" "gfabase load"
 
 time gfabase view "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.roundtrip.gfa"
@@ -50,7 +50,7 @@ gfabase view "${TMPDIR}/roundtrip2.gfab" | grep GATTACA > /dev/null
 is "$?" "0" "view --no-sequences (control)"
 
 # sub two scaffolds and make sure we get those Paths
-time gfabase sub "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" "${TMPDIR}/sub.gfab" \
+time gfabase --verbose sub "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" "${TMPDIR}/sub.gfab" \
     20412 106423 14364 133587 133589 17280
 is "$?" "0" "sub scaffolds"
 gfabase view "${TMPDIR}/sub.gfab" | grep NODE_2_length_747618_cov_15.708553_3
@@ -74,4 +74,4 @@ is "$(cat "${TMPDIR}/sub_by_path.gfa" | wc -l)" "15" "sub --view by path line co
 gfabase load /dev/null "${TMPDIR}/empty.gfab"
 is "$?" "3" "gfabase load empty"
 
-rm -rf "$TMPDIR"
+#rm -rf "$TMPDIR"

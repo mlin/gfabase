@@ -1,27 +1,37 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use json::object;
-use log::{debug, info, warn};
+use log::{debug, info, log_enabled, warn};
+use num_format::{Locale, ToFormattedString};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::{HashMap, HashSet};
 
+use crate::connectivity;
 use crate::invalid_gfa;
 use crate::util;
 use crate::util::Result;
 
 #[derive(Clap)]
 pub struct Opts {
-    /// uncompressed GFA file/stream (use - for stdin)
+    /// Uncompressed GFA file/stream (use - for stdin)
     pub gfa: String,
 
-    /// destination gfab filename
+    /// Destination gfab filename
     pub gfab: String,
 
-    /// compression level (-5 to 22)
+    /// Compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
 
-    /// disable two-bit encoding for segment sequences (less efficient, but preserves U and lowercase nucleotides)
+    /// Omit index of graph connectivity (saves time & memory, disables certain queries)
+    #[clap(long)]
+    pub no_connectivity: bool,
+
+    /// Omit segment sequences
+    #[clap(long)]
+    pub no_sequences: bool,
+
+    /// Disable two-bit encoding for segment sequences (less efficient, but preserves lowercase nucleotides and U's)
     #[clap(long)]
     pub no_twobit: bool,
 }
@@ -58,7 +68,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         debug!("processing GFA1 records...");
-        records_processed = insert_gfa1(&opts.gfa, &txn, !opts.no_twobit)?;
+        records_processed = insert_gfa1(&opts.gfa, &txn, !opts.no_sequences, !opts.no_twobit)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
@@ -77,14 +87,16 @@ pub fn main(opts: &Opts) -> Result<()> {
         }
 
         // indexing
-        create_indexes(&txn)?;
+        create_indexes(&txn, !opts.no_connectivity)?;
 
         // done
         debug!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
 
-    summary(&db)?;
+    if log_enabled!(log::Level::Debug) {
+        summary(&db)?;
+    }
     db.close().map_err(|(_, e)| e)?;
     if records_processed > 0 {
         info!("🗹 done");
@@ -133,7 +145,7 @@ pub fn create_tables(db: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<()> {
     info!("indexing...");
 
     let ddl = include_str!("schema/GFA1.index.sql");
@@ -152,8 +164,13 @@ pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
         "refseq_begin",
         "refseq_end",
     )?;
-    debug!("\tGenomic Range Indexing ...");
+    debug!("\tindexing segment mappings by genomic range ...");
     db.execute_batch(&gri_sql)?;
+
+    if connectivity {
+        debug!("\tindexing graph connectivity ...");
+        connectivity::index(db)?;
+    }
 
     debug!("\tANALYZE ...");
     db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
@@ -161,7 +178,7 @@ pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize> {
+fn insert_gfa1(filename: &str, txn: &Transaction, sequences: bool, twobit: bool) -> Result<usize> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
@@ -201,6 +218,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize>
                 insert_gfa1_segment(
                     tsv,
                     txn,
+                    sequences,
                     &mut stmt_insert_segment_meta,
                     &mut stmt_insert_segment_sequence,
                     &mut stmt_insert_segment_mapping,
@@ -263,6 +281,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, twobit: bool) -> Result<usize>
 fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
+    sequences: bool,
     stmt_meta: &mut Statement,
     stmt_sequence: &mut Statement,
     stmt_mapping: &mut Statement,
@@ -306,20 +325,22 @@ fn insert_gfa1_segment(
     if let Some(nm) = name {
         segments_by_name.insert(String::from(nm), rowid_actual);
     }
-    if let Some(seq) = maybe_sequence {
-        if !*sequence_char_warning {
-            for ch in seq.chars() {
-                match ch {
-                    'a' | 'c' | 'g' | 't' | 'u' | 'U' => {
-                        warn!("segment sequences contain 'U' and/or lowercase nucleotides, which may not be preserved in the .gfab encoding (example segment_id = {})", rowid_actual);
-                        *sequence_char_warning = true;
-                        break;
+    if sequences {
+        if let Some(seq) = maybe_sequence {
+            if !*sequence_char_warning {
+                for ch in seq.chars() {
+                    match ch {
+                        'a' | 'c' | 'g' | 't' | 'u' | 'U' => {
+                            warn!("segment sequences contain 'U' and/or lowercase nucleotides, which may not be preserved in the .gfab encoding (example segment_id = {})", rowid_actual);
+                            *sequence_char_warning = true;
+                            break;
+                        }
+                        _ => (),
                     }
-                    _ => (),
                 }
             }
+            stmt_sequence.execute(params![rowid_actual, seq])?;
         }
-        stmt_sequence.execute(params![rowid_actual, seq])?;
     }
 
     // add a mapping from rGFA tags, if present
@@ -538,7 +559,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
             NO_PARAMS,
             |ctr| ctr.get(0),
         )?;
-        debug!("\t{}\t{}", table, ct);
+        debug!("\t{}\t{}", table, ct.to_formatted_string(&Locale::en));
     }
     if let Some(e) = db
         .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
@@ -551,6 +572,43 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
         .optional()?
     {
         return Err(e);
+    }
+    if connectivity::has_index(db, "")? {
+        debug!("undirected graph connectivity:");
+        db.query_row(
+            "SELECT count(component_id), max(size), sum(size), sum(cuts), sum(bp), sum(cuts_bp) FROM
+                (SELECT
+                        component_id, count(segment_id) AS size,
+                        sum(is_cutpoint) AS cuts,
+                        sum(sequence_length) AS bp,
+                        sum(is_cutpoint*sequence_length) AS cuts_bp
+                 FROM gfa1_connectivity INNER JOIN gfa1_segment_meta USING(segment_id)
+                 GROUP BY component_id)",
+            NO_PARAMS,
+            |row| {
+                let count: i64 = row.get(0)?;
+                if count > 0 {
+                    let maxsize: i64 = row.get(1)?;
+                    let sumsize: i64 = row.get(2)?;
+                    let cuts: i64 = row.get(3)?;
+                    let bp: i64 = row.get(4)?;
+                    let cuts_bp: i64 = row.get(5)?;
+                    debug!("\t{} connected components (of at least 2 segments)", count.to_formatted_string(&Locale::en));
+                    debug!(
+                        "\t{} segments in these components, totaling {} bp",
+                        sumsize.to_formatted_string(&Locale::en), bp.to_formatted_string(&Locale::en)
+                    );
+                    debug!(
+                        "\t{} cutpoint segments, totaling {} bp",
+                        cuts.to_formatted_string(&Locale::en), cuts_bp.to_formatted_string(&Locale::en)
+                    );
+                    debug!("\t{} segments in largest component", maxsize.to_formatted_string(&Locale::en))
+                } else {
+                    warn!("graph has no links")
+                }
+                Ok(())
+            },
+        )?;
     }
     Ok(())
 }
