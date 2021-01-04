@@ -19,11 +19,11 @@ pub struct Opts {
     /// Destination gfab filename
     pub gfab: String,
 
-    /// Compression level (-5 to 22)
-    #[clap(long, default_value = "6")]
-    pub compress: i8,
+    /// Always store segment/path name text (don't attempt to parse integer ID)
+    #[clap(long)]
+    pub always_names: bool,
 
-    /// Omit index of graph connectivity (saves time & memory, disables certain queries)
+    /// Omit index of graph connectivity (saves loading time & memory / disables certain queries)
     #[clap(long)]
     pub no_connectivity: bool,
 
@@ -31,9 +31,13 @@ pub struct Opts {
     #[clap(long)]
     pub no_sequences: bool,
 
-    /// Disable two-bit encoding for segment sequences (less efficient, but preserves lowercase nucleotides and U's)
+    /// Disable two-bit encoding for segment sequences (preserves lowercase nucleotides and U's / less efficient)
     #[clap(long)]
     pub no_twobit: bool,
+
+    /// Compression level (-5 to 22)
+    #[clap(long, default_value = "6")]
+    pub compress: i8,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -68,7 +72,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         debug!("processing GFA1 records...");
-        records_processed = insert_gfa1(&opts.gfa, &txn, !opts.no_sequences, !opts.no_twobit)?;
+        records_processed = insert_gfa1(&opts.gfa, &txn, &opts)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
@@ -178,13 +182,17 @@ pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<(
     Ok(())
 }
 
-fn insert_gfa1(filename: &str, txn: &Transaction, sequences: bool, twobit: bool) -> Result<usize> {
+fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> {
     // prepared statements
     let mut stmt_insert_segment_meta =
         txn.prepare("INSERT INTO temp.segment_meta_hold(segment_id,name,sequence_length,tags_json) VALUES(?,?,?,?)")?;
     let mut stmt_insert_segment_sequence = txn.prepare(&format!(
         "INSERT INTO gfa1_segment_sequence(segment_id,sequence_twobit) VALUES(?,{})",
-        if twobit { "nucleotides_twobit(?)" } else { "?" }
+        if !opts.no_twobit {
+            "nucleotides_twobit(?)"
+        } else {
+            "?"
+        }
     ))?;
     let mut stmt_insert_link = txn.prepare(
         "INSERT INTO gfa1_link(from_segment,from_reverse,to_segment,to_reverse,cigar,tags_json) VALUES(?,?,?,?,?,?)"
@@ -207,7 +215,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, sequences: bool, twobit: bool)
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
     let mut maybe_header = None;
-    let mut sequence_char_warning = !twobit;
+    let mut sequence_char_warning = opts.no_twobit;
 
     // closure to process one record
     let mut other_record_types = HashSet::new();
@@ -218,7 +226,8 @@ fn insert_gfa1(filename: &str, txn: &Transaction, sequences: bool, twobit: bool)
                 insert_gfa1_segment(
                     tsv,
                     txn,
-                    sequences,
+                    !opts.no_sequences,
+                    opts.always_names,
                     &mut stmt_insert_segment_meta,
                     &mut stmt_insert_segment_sequence,
                     &mut stmt_insert_segment_mapping,
@@ -236,6 +245,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, sequences: bool, twobit: bool)
                 insert_gfa1_path(
                     tsv,
                     txn,
+                    opts.always_names,
                     &mut stmt_insert_path,
                     &mut stmt_insert_path_element,
                     &segments_by_name,
@@ -282,6 +292,7 @@ fn insert_gfa1_segment(
     tsv: &Vec<&str>,
     txn: &Transaction,
     sequences: bool,
+    always_names: bool,
     stmt_meta: &mut Statement,
     stmt_sequence: &mut Statement,
     stmt_mapping: &mut Statement,
@@ -294,7 +305,11 @@ fn insert_gfa1_segment(
         invalid_gfa!("malformed S line");
     }
 
-    let rowid = name_to_id(tsv[1]);
+    let rowid = if !always_names {
+        name_to_id(tsv[1])
+    } else {
+        None
+    };
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
     let maybe_sequence = if tsv.len() > 2 && tsv[2] != "*" {
         Some(tsv[2])
@@ -422,6 +437,7 @@ fn insert_gfa1_link(
 fn insert_gfa1_path(
     tsv: &Vec<&str>,
     txn: &Transaction,
+    always_names: bool,
     stmt_path: &mut Statement,
     stmt_ele: &mut Statement,
     segments_by_name: &HashMap<String, i64>,
@@ -431,7 +447,11 @@ fn insert_gfa1_path(
         invalid_gfa!("malformed P line: {}", tsv.join("\t"));
     }
 
-    let rowid = name_to_id(tsv[1]);
+    let rowid = if !always_names {
+        name_to_id(tsv[1])
+    } else {
+        None
+    };
     let name = if rowid.is_some() { None } else { Some(tsv[1]) };
 
     let maybe_cigars: Option<Vec<&str>> = if tsv.len() > 3 && tsv[3] != "*" {

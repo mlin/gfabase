@@ -24,9 +24,13 @@ pub struct Opts {
     #[clap(long)]
     pub path: bool,
 
-    /// SEGMENTs are refseq ranges like chr7:1,234-5,678 to locate in segment mappings
+    /// SEGMENTs are reference sequence ranges like chr7:1,234-5,678 to locate in segment mappings
     #[clap(long)]
     pub range: bool,
+
+    /// Treat SEGMENTs as text names even if they look like integer IDs
+    #[clap(long)]
+    pub always_names: bool,
 
     /// Expand from specified segments to complete (undirected) connected component(s)
     #[clap(long)]
@@ -57,6 +61,8 @@ pub struct Opts {
     #[clap(long, default_value = "6")]
     pub compress: i8,
 }
+// TODO: add help headings e.g. #[clap(long, help_heading = Some("SEGMENT"))]
+// pending release of fix for https://github.com/clap-rs/clap/issues/2279
 
 pub fn main(opts: &Opts) -> Result<()> {
     if opts.segments.len() == 0 {
@@ -217,12 +223,13 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                 if insert_segment.execute(params![segment])? < 1 {
                     bad_command!("no segments found overlapping {}", segment);
                 }
-            } else if let Some(segment_id) = load::name_to_id(segment) {
+            } else if !opts.always_names && load::name_to_id(segment).is_some() {
+                let id = load::name_to_id(segment).unwrap();
                 if !opts.path {
-                    insert_segment.execute(params![segment_id]).map(|_| ())?;
+                    insert_segment.execute(params![id]).map(|_| ())?;
                     check_start_segments = true;
-                } else if insert_path.execute(params![segment_id])? < 1 {
-                    bad_command!("unknown path {}", segment_id);
+                } else if insert_path.execute(params![id])? < 1 {
+                    bad_command!("unknown path {}", id);
                 }
             } else if !opts.path {
                 let maybe_segment_id: Option<i64> = find_segment_by_name
