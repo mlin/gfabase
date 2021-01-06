@@ -53,7 +53,7 @@ jobs:
       run: docker run --rm gfabase
     - name: run-up in clean centos:7
       run: |
-        docker run gfabase sha256sum target/release/gfabase
+        docker run gfabase sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0
         docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
         echo -n "required glibc: "
         objdump -t gfabase | grep -o 'GLIBC_.*' | sort -Vr | head -n1
