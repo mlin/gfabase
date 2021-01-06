@@ -62,7 +62,7 @@ Soon we plan to make it easy to source the ranges directly from a mapper run on 
 
 ### Subgraph cutpoints
 
-Using `gfabase sub` to extract a set or range of segments, we often want to get their "neighborhood" too, without loading in the whole connected component. The `.gfab` has an index of *cutpoints*, which are (informally) segments with no possible detours around them to get from one end of the chromosome to the other. These are natural boundaries for local subgraph extraction:
+Using `gfabase sub` to extract a set or range of segments, we often want to get their "neighborhood" too, without loading in the whole connected component. The `.gfab` has an index of *cutpoints*, which are (informally) segments with no possible detours around them to walk from one end of the chromosome to the other. These are natural boundaries for local subgraph extraction:
 
 * `--cutpoints 1` finds the subgraph connected to the command-line segments *without* crossing any cutpoint
 * `--cutpoints N` finds the subgraph connected while crossing *at most N-1* cutpoints

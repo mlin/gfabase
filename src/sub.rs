@@ -334,7 +334,7 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
 // Otherwise, treat non-cutpoint segments as unsided and all edges as undirected.
 //
 //  IN: segment IDs in temp.start_segments
-// OUT: segment IDs in temp.connected_segments
+// OUT: segment IDs in temp.sub_segments
 fn expand_to_cutpoints(
     db: &rusqlite::Connection,
     input_schema: &str,
@@ -370,7 +370,7 @@ fn expand_to_cutpoints(
     let mut visited: HashMap<(i64, bool), i64> = HashMap::new();
 
     // seed the queue with starting segments (both sides, in case a starting segment is itself a
-    // cutpoint
+    // cutpoint)
     {
         let mut start_segments = db.prepare("SELECT segment_id FROM temp.start_segments")?;
         let mut start_segments_cursor = start_segments.query(NO_PARAMS)?;

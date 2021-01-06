@@ -1,9 +1,9 @@
-# Builds gfabase and SQLite in older OS to maximize portability
-FROM ubuntu:16.04
+# Builds gfabase and SQLite in older OS to maximize compatibility
+FROM centos:7
 
 ARG sqlite_version=3340000
-ARG zstd_version=1.4.5
-ARG target_cpu=haswell
+ARG zstd_version=1.4.8
+ARG target_cpu=core-avx-i
 
 ENV CFLAGS="-march=${target_cpu} -O3"
 ENV RUSTFLAGS="-C target-cpu=${target_cpu} -C link-args=-Wl,-rpath,\$ORIGIN"
@@ -11,10 +11,7 @@ ENV RUSTFLAGS="-C target-cpu=${target_cpu} -C link-args=-Wl,-rpath,\$ORIGIN"
 ENV SQLITE_CFLAGS="\
         -DSQLITE_ENABLE_LOAD_EXTENSION \
         -DSQLITE_USE_URI \
-        -DSQLITE_DQS=0 \
         -DSQLITE_LIKE_DOESNT_MATCH_BLOBS \
-        -DSQLITE_OMIT_SHARED_CACHE \
-        -DSQLITE_OMIT_DEPRECATED \
         -DSQLITE_DEFAULT_MEMSTATUS=0 \
         -DSQLITE_MAX_EXPR_DEPTH=0 \
         -DSQLITE_ENABLE_NULL_TRIM \
@@ -29,9 +26,14 @@ ENV SQLITE_CFLAGS="\
         -DSQLITE_ENABLE_SESSION \
 "
 
-# apt
-RUN apt-get -qq update && DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
-        build-essential zip git-core wget aria2 tabix libtest-harness-perl
+# yum
+RUN yum install -q -y gcc make unzip git wget perl-test-harness epel-release
+RUN yum install -q -y aria2 htslib-tools
+
+# rustup
+ADD https://sh.rustup.rs /usr/local/bin/rustup-init.sh
+RUN chmod +x /usr/local/bin/rustup-init.sh && rustup-init.sh -y
+ENV PATH=${PATH}:/root/.cargo/bin
 
 RUN mkdir -p /work/gfabase
 
@@ -44,24 +46,19 @@ RUN gcc -shared -o libsqlite3.so.0 -fPIC -shared -Wl,-soname,libsqlite3.so.0 -g 
 RUN gcc -o sqlite3 -g ${CFLAGS} ${SQLITE_CFLAGS} sqlite3.c shell.c -lpthread -ldl -lm
 RUN cp libsqlite3.so.0 /usr/local/lib && cp *.h /usr/local/include && cp sqlite3 /usr/local/bin
 RUN ln -s /usr/local/lib/libsqlite3.so.0 /usr/local/lib/libsqlite3.so
-
-# Zstandard (only needed for tests)
-WORKDIR /work
-RUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz | tar zx
-WORKDIR /work/zstd-${zstd_version}
-RUN make install -j $(nproc)
-
-# rustup
-ADD https://sh.rustup.rs /usr/local/bin/rustup-init.sh
-RUN chmod +x /usr/local/bin/rustup-init.sh && rustup-init.sh -y
-ENV PATH=${PATH}:/root/.cargo/bin
-
-RUN ldconfig
+ENV LD_LIBRARY_PATH=/usr/local/lib
 
 # cargo build
 ADD . /work/gfabase
 WORKDIR /work/gfabase
 RUN ./cargo clean && ./cargo build --release
 
+# Zstandard (only needed for tests)
+WORKDIR /work
+RUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz | tar zx
+WORKDIR /work/zstd-${zstd_version}
+RUN make install
+        # ^ don't use `make -j $(nproc)` due to bugs in this old version of make
+
 # some of the tests aren't convenient to run here, as they involve large downloads or python3.6+
-CMD bash -c "sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0 && target/release/gfabase version && prove -v test/{1,2}*.t"
+CMD bash -c "sha256sum target/release/gfabase && target/release/gfabase version && prove -v test/{1,2}*.t"
