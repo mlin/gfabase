@@ -57,7 +57,7 @@ jobs:
         docker run gfabase ldd -v -r target/release/gfabase
         docker run gfabase sha256sum target/release/gfabase
         echo "----"
-        docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /mnt
+        docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
         ./gfabase version
         ldd -r gfabase
         echo -n "required glibc: "
@@ -65,6 +65,8 @@ jobs:
         echo -n "RPATH: "
         readelf -d gfabase | grep RPATH
         sha256sum gfabase
+    - name: run-up in clean centos:7
+      run: docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-linux-x86-64

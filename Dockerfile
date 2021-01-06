@@ -48,17 +48,16 @@ RUN cp libsqlite3.so.0 /usr/local/lib && cp *.h /usr/local/include && cp sqlite3
 RUN ln -s /usr/local/lib/libsqlite3.so.0 /usr/local/lib/libsqlite3.so
 ENV LD_LIBRARY_PATH=/usr/local/lib
 
+# Zstandard (only needed for tests)
+RUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz | tar zx
+WORKDIR /work/zstd-${zstd_version}
+RUN make install
+        # ^ don't use `make -j $(nproc)` due to buggy old make
+
 # cargo build
 ADD . /work/gfabase
 WORKDIR /work/gfabase
 RUN ./cargo clean && ./cargo build --release
-
-# Zstandard (only needed for tests)
-WORKDIR /work
-RUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz | tar zx
-WORKDIR /work/zstd-${zstd_version}
-RUN make install
-        # ^ don't use `make -j $(nproc)` due to bugs in this old version of make
 
 # some of the tests aren't convenient to run here, as they involve large downloads or python3.6+
 CMD bash -c "sha256sum target/release/gfabase && target/release/gfabase version && prove -v test/{1,2}*.t"
