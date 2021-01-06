@@ -51,22 +51,18 @@ jobs:
       run: docker build -t gfabase .
     - name: test exe
       run: docker run --rm gfabase
-    - name: symbols & digests
+    - name: run-up in clean centos:7
       run: |
-        set -e
-        docker run gfabase ldd -v -r target/release/gfabase
         docker run gfabase sha256sum target/release/gfabase
-        echo "----"
         docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
-        ./gfabase version
-        ldd -r gfabase
         echo -n "required glibc: "
         objdump -t gfabase | grep -o 'GLIBC_.*' | sort -Vr | head -n1
         echo -n "RPATH: "
         readelf -d gfabase | grep RPATH
-        sha256sum gfabase
-    - name: run-up in clean centos:7
-      run: docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
+        docker run --rm -v $(pwd):/mnt centos:7 ldd -v -r /mnt/gfabase
+        docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
+    - name: digest
+      run: ./gfabase version && sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-linux-x86-64

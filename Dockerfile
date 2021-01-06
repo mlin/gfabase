@@ -49,6 +49,7 @@ RUN ln -s /usr/local/lib/libsqlite3.so.0 /usr/local/lib/libsqlite3.so
 ENV LD_LIBRARY_PATH=/usr/local/lib
 
 # Zstandard (only needed for tests)
+WORKDIR /work
 RUN wget -nv -O - https://github.com/facebook/zstd/releases/download/v${zstd_version}/zstd-${zstd_version}.tar.gz | tar zx
 WORKDIR /work/zstd-${zstd_version}
 RUN make install
