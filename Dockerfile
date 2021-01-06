@@ -27,7 +27,7 @@ ENV SQLITE_CFLAGS="\
 "
 
 # yum
-RUN yum install -q -y gcc make unzip git wget perl-test-harness epel-release
+RUN yum install -q -y gcc make unzip git wget perl-Test-Harness epel-release
 RUN yum install -q -y aria2 htslib-tools
 
 # rustup
