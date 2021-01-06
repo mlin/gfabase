@@ -40,7 +40,7 @@ jobs:
         sudo pip3 install genomicsqlite
         prove -v test/*.t
 
-  linux-exe:
+  linux-x86-64-exe:
     runs-on: ubuntu-20.04
     steps:
     - uses: actions/checkout@v2
@@ -51,22 +51,19 @@ jobs:
       run: docker build -t gfabase .
     - name: test exe
       run: docker run --rm gfabase
-    - name: ldd
+    - name: run-up in clean centos:7
       run: |
-        docker run gfabase ldd -v -r target/release/gfabase
-        docker run gfabase readelf -d target/release/gfabase
         docker run gfabase sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0
-        docker run gfabase target/release/gfabase version
-        echo "----"
         docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
-        ldd -v -r gfabase
-        readelf -d gfabase
-        sha256sum gfabase libsqlite3.so.0
-        echo "----"
-        ./gfabase version
+        echo -n "required glibc: "
+        objdump -t gfabase | grep -o 'GLIBC_.*' | sort -Vr | head -n1
+        echo -n "RPATH: "
+        readelf -d gfabase | grep RPATH
+        docker run --rm -v $(pwd):/mnt centos:7 ldd -v -r /mnt/gfabase
+        docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
+    - name: digest
+      run: ./gfabase version && sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
-        name: gfabase_linux_x86_64
-        path: |
-          gfabase
-          libsqlite3.so.0
+        name: gfabase-linux-x86-64
+        path: gfabase
