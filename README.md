@@ -8,18 +8,12 @@ Effectively, .gfab is a new GFA-superset format with built-in compression and in
 
 Each [Release](https://github.com/mlin/gfabase/releases) includes a prebuilt `gfabase` executable for modern Linux x86-64 hosts (with one caveat, shown there). The following examples also use the [`zstd` tool](https://github.com/facebook/zstd) for decompression.
 
-```bash
-./gfabase version
+**Example 1. metaSPAdes assembly of simulated metagenomic reads: access scaffold by Path name**
 
-# stream two example GFA files into corresponding .gfab files:
-# 1. metaSPAdes assembly of some simulated reads (from doi:10.1016/j.cell.2019.07.010)
+```bash
 curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst?raw=true" \
     | zstd -dc \
     | ./gfabase load - atcc_staggered.metaspades.gfab
-# 2. excerpt of a minigraph pangenome rGFA (from doi:10.1186/s13059-020-02168-z)
-curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst?raw=true" \
-    | zstd -dc \
-    | ./gfabase --verbose load - chr22_chrY.gfab
 
 # extract a scaffold from the metagenome assembly (by GFA Path name)
 ./gfabase sub atcc_staggered.metaspades.gfab a_scaffold.gfab --path NODE_2_length_747618_cov_15.708553_3
@@ -27,6 +21,16 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 ./gfabase view a_scaffold.gfab | less -S
 # or in one command:
 ./gfabase sub atcc_staggered.metaspades.gfab - --view --path NODE_2_length_747618_cov_15.708553_3 | less -S
+```
+
+<sup>Simulated reads from [Ye <em>et al.</em> (2019)](https://dx.doi.org/10.1016/j.cell.2019.07.010)</sup>
+
+**Example 2. Human pangenome rGFA: access connected component & subgraph**
+
+```bash
+curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst?raw=true" \
+    | zstd -dc \
+    | ./gfabase --verbose load - chr22_chrY.gfab
 
 # from the rGFA graph, extract the whole connected component associated with chrY
 ./gfabase sub chr22_chrY.gfab chrY.gfab --range --connected chrY:1-999,999,999
@@ -35,10 +39,11 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/GRCh38-20-0.10b.chr
 # starting from the segments constituting a megabase of chr22, expand to the connected subgraph
 # without crossing "cutpoints" -- defined below
 ./gfabase sub chr22_chrY.gfab - --view --range --cutpoints 1 chr22:11,000,000-12,000,000 | less -S
-
 ```
+<sup>rGFA excerpted from from [Li, Feng, & Chu (2020)](https://dx.doi.org/10.1186/s13059-020-02168-z)</sup>
 
-If we've also `pip3 install genomicsqlite`, then we can open a .gfab file in the SQLite interactive shell and poke around in SQL. (This does require up-to-date host SQLite and `sqlite3` shell.)
+
+If we've also `pip3 install genomicsqlite`, then we can open a .gfab file in the SQLite interactive shell and poke around in SQL.
 
 ```
 $ genomicsqlite chr22_chrY.gfab -readonly
