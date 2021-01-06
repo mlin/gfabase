@@ -67,7 +67,5 @@ jobs:
         sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
-        name: gfabase_linux_x86_64
-        path: |
-          gfabase
-          libsqlite3.so.0
+        name: gfabase-linux-x86-64
+        path: gfabase
