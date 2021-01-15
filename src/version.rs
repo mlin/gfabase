@@ -1,6 +1,8 @@
 use genomicsqlite::ConnectionMethods;
 use rusqlite::OpenFlags;
 
+pub const GFAB_VERSION_REQ: &str = ">= 0.3.0-0";
+
 #[allow(unused)]
 mod buildinfo {
     include!(concat!(env!("OUT_DIR"), "/built.rs"));
@@ -13,6 +15,12 @@ pub fn main() -> crate::util::Result<()> {
         buildinfo::PROFILE,
         env!("CARGO_PKG_VERSION"),
         timestamp.to_rfc3339()
+    );
+    println!(
+        "  compatible .gfab format versions {}",
+        semver::VersionReq::parse(GFAB_VERSION_REQ)
+            .unwrap()
+            .to_string()
     );
     println!(
         "{} RUSTFLAGS='{}'",

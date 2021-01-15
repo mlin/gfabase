@@ -9,7 +9,7 @@ source test/bash-tap/bash-tap-bootstrap
 
 plan tests 18
 
-cargo build --release
+./cargo build --release
 is "$?" "0" "cargo build"
 PATH="$(pwd)/target/release:${PATH}"
 gfabase version

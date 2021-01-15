@@ -21,6 +21,7 @@ thiserror = "^1.0"
 tempfile = "3"
 bloomfilter = "^1"
 num-format = "^0.4"
+semver = "^0.11"
 
 [dependencies.rusqlite]
 version = "0.24.2"

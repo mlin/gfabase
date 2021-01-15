@@ -1,3 +1,4 @@
+use crate::version::GFAB_VERSION_REQ;
 use io::BufRead;
 use log::{debug, warn};
 use std::path::Path;
@@ -28,6 +29,9 @@ pub enum Error {
 
     #[error("file isn't .gfab format (or corrupt)")]
     NotGfab,
+
+    #[error("[.gfab version incompatible] version: {version:?}, required: {required:?}")]
+    IncompatibleGfab { version: String, required: String },
 
     #[error("empty .gfab")]
     EmptyGfab,
@@ -93,8 +97,8 @@ pub fn delete_existing_file(filename: &str) -> Result<()> {
     }
 }
 
-pub fn check_gfabase_schema(db: &rusqlite::Connection, schema: &str) -> Result<()> {
-    let version: rusqlite::Result<String> = db.query_row(
+pub fn check_gfab_schema(db: &rusqlite::Connection, schema: &str) -> Result<semver::Version> {
+    let pg_result: rusqlite::Result<String> = db.query_row(
         &format!(
             "SELECT json_extract(tags_json, '$.PG:Z') FROM {}gfa1_header WHERE _rowid_ = 1",
             schema
@@ -102,13 +106,28 @@ pub fn check_gfabase_schema(db: &rusqlite::Connection, schema: &str) -> Result<(
         rusqlite::NO_PARAMS,
         |row| row.get(0),
     );
-    match version {
-        Ok(s) if s.starts_with("gfabase-v") => Ok(()),
-        _ => Err(Error::NotGfab),
+    if let Ok(pg) = pg_result {
+        if pg.starts_with("gfabase-v") {
+            if let Ok(v) = semver::Version::parse(&pg[9..]) {
+                return Ok(v);
+            }
+        }
     }
+    Err(Error::NotGfab)
 }
 
-pub fn check_gfabase_filename_schema(filename: &str) -> Result<()> {
+pub fn check_gfab_version(gfab_version: &semver::Version) -> Result<()> {
+    let req = semver::VersionReq::parse(GFAB_VERSION_REQ).unwrap();
+    if req.matches(gfab_version) {
+        return Ok(());
+    }
+    Err(Error::IncompatibleGfab {
+        version: gfab_version.to_string(),
+        required: req.to_string(),
+    })
+}
+
+pub fn check_gfab_filename_schema(filename: &str) -> Result<semver::Version> {
     // not "safe", but usually gives more-helpful error message:
     if !Path::new(filename).is_file() {
         return Err(Error::IoError(io::Error::new(
@@ -121,7 +140,7 @@ pub fn check_gfabase_filename_schema(filename: &str) -> Result<()> {
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &json::object::Object::new(),
     ) {
-        Ok(db) => check_gfabase_schema(&db, ""),
+        Ok(db) => check_gfab_schema(&db, ""),
         _ => Err(Error::NotGfab),
     }
 }
