@@ -2,8 +2,8 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, log_enabled, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
-use std::cmp;
 use std::collections::{BinaryHeap, HashMap};
+use std::{cmp, io};
 
 use crate::util::Result;
 use crate::{bad_command, connectivity, load, util, view};
@@ -13,7 +13,7 @@ pub struct Opts {
     /// gfab filename
     pub gfab: String,
 
-    /// output filename (required unless --view)
+    /// output filename [omit or - for standard output, implying --view]
     #[clap(short, default_value = "-")]
     pub outfile: String,
 
@@ -46,9 +46,13 @@ pub struct Opts {
     #[clap(long, name = "L", default_value = "0")]
     pub cutpoints_nt: u64,
 
-    /// Write .gfa instead of .gfab to outfile [omit or - for standard output]
+    /// Write .gfa instead of .gfab to outfile
     #[clap(long)]
     pub view: bool,
+
+    /// Launch Bandage on .gfa outfile (implies --view; create temporary file if outfile unspecified)
+    #[clap(long)]
+    pub bandage: bool,
 
     /// Omit segment sequences
     #[clap(long)]
@@ -70,17 +74,15 @@ pub fn main(opts: &Opts) -> Result<()> {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
     util::check_gfab_filename_schema(&opts.gfab)?;
-    if !opts.view {
-        sub_gfab(opts)
-    } else {
+    if opts.view || opts.bandage || opts.outfile == "-" {
         sub_gfa(opts)
+    } else {
+        sub_gfab(opts)
     }
 }
 
 fn sub_gfab(opts: &Opts) -> Result<()> {
-    if opts.outfile.is_empty() || opts.outfile == "-" {
-        bad_command!("output .gfab filename required; cannot output .gfab to stdout")
-    }
+    assert_ne!(opts.outfile, "-");
     if !opts.view && !opts.outfile.ends_with(".gfab") {
         warn!("output filename should end in .gfab");
     }
@@ -156,10 +158,6 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
         &dbopts,
     )?;
 
-    // open output writer
-    let mut writer_box = view::writer(&opts.outfile)?;
-    let out = &mut *writer_box;
-
     let txn = db.transaction()?;
     compute_subgraph(&txn, opts, "")?;
     txn.execute_batch(
@@ -172,23 +170,42 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
 
-    view::write_header(&txn, out)?;
-    view::write_segments(
-        &txn,
-        "WHERE segment_id IN temp.sub_segments",
-        !opts.no_sequences,
-        out,
-    )?;
-    view::write_links(
-        &txn,
-        "WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",
-        out,
-    )?;
-    view::write_paths(&txn, "WHERE path_id IN temp.sub_paths", out)?;
-    out.flush()?;
+    if opts.outfile == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
+        // interactive mode: pipe into less -S
+        view::less(|less_in| sub_gfa_write(&txn, !opts.no_sequences, less_in))?
+    } else {
+        let mut output_gfa = String::from(&opts.outfile);
+        if opts.bandage && output_gfa == "-" {
+            output_gfa = view::bandage_temp_filename()?
+        }
+
+        {
+            let mut writer_box = view::writer(&output_gfa)?;
+            sub_gfa_write(&txn, !opts.no_sequences, &mut *writer_box)?;
+        }
+
+        if opts.bandage {
+            view::bandage(&output_gfa)?
+        }
+    }
 
     txn.rollback()?;
     Ok(())
+}
+
+fn sub_gfa_write(
+    db: &rusqlite::Connection,
+    sequences: bool,
+    out: &mut dyn io::Write,
+) -> Result<()> {
+    view::write_header(db, out)?;
+    view::write_segments(db, "WHERE segment_id IN temp.sub_segments", sequences, out)?;
+    view::write_links(
+        db,
+        "WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",
+        out,
+    )?;
+    view::write_paths(&db, "WHERE path_id IN temp.sub_paths", out)
 }
 
 // populate temp.sub_segments with the segment IDs of the desired subgraph

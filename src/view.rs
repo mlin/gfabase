@@ -1,9 +1,10 @@
 use clap::Clap;
 use json::JsonValue;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use rusqlite::{params, OpenFlags, NO_PARAMS};
-use std::{fs, io};
+use std::{env, fs, io, path, process};
 
+use crate::bad_command;
 use crate::util;
 use crate::util::Result;
 
@@ -17,6 +18,9 @@ pub struct Opts {
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
+    /// Launch Bandage on output file (temporary file, if unspecified)
+    #[clap(long)]
+    pub bandage: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -36,14 +40,33 @@ pub fn main(opts: &Opts) -> Result<()> {
     debug!("gfabase v{} created {}", gfab_version, opts.input_gfab);
     util::check_gfab_version(&gfab_version)?;
 
-    // open output writer
-    let mut writer_box = writer(&opts.output_gfa)?;
-    let out = &mut *writer_box;
-    write_header(&db, out)?;
-    write_segments(&db, "", !opts.no_sequences, out)?;
-    write_links(&db, "", out)?;
-    write_paths(&db, "", out)?;
-    out.flush()?;
+    if opts.output_gfa == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
+        // interactive mode: pipe into less -S
+        less(|less_in| {
+            write_header(&db, less_in)
+                .and_then(|_| write_segments(&db, "", !opts.no_sequences, less_in))
+                .and_then(|_| write_links(&db, "", less_in))
+                .and_then(|_| write_paths(&db, "", less_in))
+        })?
+    } else {
+        let mut output_gfa = String::from(&opts.output_gfa);
+        if opts.bandage && output_gfa == "-" {
+            output_gfa = bandage_temp_filename()?
+        }
+
+        {
+            let mut writer_box = writer(&output_gfa)?;
+            let out = &mut *writer_box;
+            write_header(&db, out)?;
+            write_segments(&db, "", !opts.no_sequences, out)?;
+            write_links(&db, "", out)?;
+            write_paths(&db, "", out)?
+        }
+
+        if opts.bandage {
+            bandage(&output_gfa)?
+        }
+    }
 
     Ok(())
 }
@@ -58,6 +81,58 @@ pub fn writer(gfa_filename: &str) -> Result<Box<dyn io::Write>> {
     Ok(Box::new(io::BufWriter::new(fs::File::create(
         gfa_filename,
     )?)))
+}
+
+/// Start `less -S` and call `write` with its standard input pipe.
+/// Tolerate BrokenPipe errors (user exited before viewing all data)
+pub fn less<F>(write: F) -> Result<()>
+where
+    F: FnOnce(&mut process::ChildStdin) -> Result<()>,
+{
+    let mut child = process::Command::new("less")
+        .arg("-S")
+        .stdin(process::Stdio::piped())
+        .spawn()?;
+    {
+        let mut less_in = child.stdin.take().unwrap();
+
+        match write(&mut less_in) {
+            Ok(()) => (),
+            Err(util::Error::IoError(err)) if err.kind() == io::ErrorKind::BrokenPipe => (),
+            Err(e) => return Err(e),
+        }
+    }
+    child.wait()?;
+    Ok(())
+}
+
+pub fn bandage(gfa: &str) -> Result<()> {
+    info!("Bandage load {} --draw", gfa);
+    if process::Command::new("Bandage")
+        .arg("load")
+        .arg(gfa)
+        .arg("--draw")
+        .spawn()
+        .is_err()
+    {
+        bad_command!("failed to launch Bandage; make sure it's in PATH")
+    }
+    Ok(())
+}
+
+pub fn bandage_temp_filename() -> Result<String> {
+    if !atty::is(atty::Stream::Stdout) {
+        bad_command!("supply -o filename.gfa on which to launch Bandage")
+    }
+    Ok(String::from(
+        path::Path::new(&env::var("TMPDIR").unwrap_or(String::from("/tmp")))
+            .join(format!(
+                "gfabase-bandage-{}.gfa",
+                chrono::Local::now().to_rfc3339_opts(chrono::SecondsFormat::Micros, true)
+            ))
+            .to_str()
+            .unwrap(),
+    ))
 }
 
 pub fn write_header(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
