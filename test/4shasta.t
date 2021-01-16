@@ -18,7 +18,7 @@ gfabase="cargo run --release -- --verbose"
 
 export TMPDIR=$(mktemp -d --tmpdir gfabase_shasta_test_XXXXXX)
 
-time $gfabase load /tmp/shasta-HG002-Guppy-3.6.0-run4-UL.gfa "${TMPDIR}/Assembly.gfab" --compress 1
+time $gfabase load /tmp/shasta-HG002-Guppy-3.6.0-run4-UL.gfa -o "${TMPDIR}/Assembly.gfab" --compress 1
 is "$?" "0" "gfabase load"
 
 time $gfabase view "${TMPDIR}/Assembly.gfab" | wc -c

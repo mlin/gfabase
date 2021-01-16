@@ -18,7 +18,7 @@ gfabase="cargo run --release -- --verbose"
 export TMPDIR=$(mktemp -d --tmpdir gfabase_hifiasm_test_XXXXXX)
 
 bgzip -dc -@ 4 /tmp/HG002-v0.11.dip.r_utg.gfa.gz \
-    | time $gfabase load - "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" --compress 1
+    | time $gfabase load -o "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" --compress 1
 is "$?" "0" "gfabase load"
 
 ls -lh /tmp/HG002-v0.11.dip.r_utg.gfa.gz "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab"
@@ -34,7 +34,7 @@ is "$(gsql 'select sum(sequence_length) from gfa1_segment_meta')" "6506642704" "
 is "$(gsql 'select sum(twobit_length(sequence_twobit)) from gfa1_segment_sequence')" "6506642704" "gfab base count"
 
 # sub by segment name
-$gfabase sub --view "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" - utg000042l utg050830l utg021888l > "${TMPDIR}/sub.gfa"
+$gfabase sub --view "${TMPDIR}/HG002-v0.11.dip.r_utg.gfab" utg000042l utg050830l utg021888l > "${TMPDIR}/sub.gfa"
 is "$(cat "${TMPDIR}/sub.gfa" | wc -l)" "8" "sub by segment name"
 
 rm -rf "$TMPDIR"

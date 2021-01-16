@@ -13,7 +13,8 @@ pub struct Opts {
     /// gfab filename
     pub gfab: String,
 
-    /// output filename
+    /// output filename (required unless --view)
+    #[clap(short, default_value = "-")]
     pub outfile: String,
 
     /// desired segments/paths/ranges
@@ -45,7 +46,7 @@ pub struct Opts {
     #[clap(long, name = "L", default_value = "0")]
     pub cutpoints_nt: u64,
 
-    /// Write .gfa instead of .gfab to outfile (- for stdout)
+    /// Write .gfa instead of .gfab to outfile [omit or - for standard output]
     #[clap(long)]
     pub view: bool,
 
@@ -77,11 +78,14 @@ pub fn main(opts: &Opts) -> Result<()> {
 }
 
 fn sub_gfab(opts: &Opts) -> Result<()> {
-    if opts.outfile == "" || opts.outfile == "-" {
+    if opts.outfile.is_empty() || opts.outfile == "-" {
         bad_command!("output .gfab filename required; cannot output .gfab to stdout")
     }
-    if !opts.outfile.ends_with(".gfab") {
+    if !opts.view && !opts.outfile.ends_with(".gfab") {
         warn!("output filename should end in .gfab");
+    }
+    if opts.view && opts.outfile != "-" && !opts.outfile.ends_with(".gfa") {
+        warn!("output filename should end in .gfa");
     }
 
     // create output database
@@ -153,7 +157,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
     )?;
 
     // open output writer
-    let mut writer_box = view::writer(Some(&opts.outfile))?;
+    let mut writer_box = view::writer(&opts.outfile)?;
     let out = &mut *writer_box;
 
     let txn = db.transaction()?;

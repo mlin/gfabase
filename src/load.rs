@@ -6,6 +6,7 @@ use num_format::{Locale, ToFormattedString};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
 use std::collections::{HashMap, HashSet};
 
+use crate::bad_command;
 use crate::connectivity;
 use crate::invalid_gfa;
 use crate::util;
@@ -13,11 +14,13 @@ use crate::util::Result;
 
 #[derive(Clap)]
 pub struct Opts {
-    /// Uncompressed GFA file/stream (use - for stdin)
-    pub gfa: String,
-
     /// Destination gfab filename
-    pub gfab: String,
+    #[clap(short)]
+    pub output_gfab: String,
+
+    /// Uncompressed GFA file/pipe [omit or - for standard input]
+    #[clap(default_value = "-")]
+    pub input_gfa: String,
 
     /// Always store segment/path name text (don't attempt to parse integer ID)
     #[clap(long)]
@@ -41,12 +44,15 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    if !opts.gfab.ends_with(".gfab") {
-        warn!("output filename should end in .gfab");
+    if !opts.output_gfab.ends_with(".gfab") {
+        warn!("output filename should end in .gfab")
+    }
+    if opts.input_gfa == "-" && atty::is(atty::Stream::Stdin) {
+        bad_command!("pipe in .gfa data or supply input filename")
     }
 
     // formulate GenomicSQLite configuration JSON
-    let mut db = new_db(&opts.gfab, opts.compress, 1024)?;
+    let mut db = new_db(&opts.output_gfab, opts.compress, 1024)?;
 
     let records_processed;
     {
@@ -72,7 +78,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
         // intake GFA records
         debug!("processing GFA1 records...");
-        records_processed = insert_gfa1(&opts.gfa, &txn, &opts)?;
+        records_processed = insert_gfa1(&opts.input_gfa, &txn, &opts)?;
         if records_processed == 0 {
             warn!("no input records processed")
         } else {
@@ -94,7 +100,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         create_indexes(&txn, !opts.no_connectivity)?;
 
         // done
-        debug!("flushing {} ...", &opts.gfab);
+        debug!("flushing {} ...", &opts.output_gfab);
         txn.commit()?;
     }
 

@@ -10,16 +10,17 @@ use crate::util::Result;
 #[derive(Clap)]
 pub struct Opts {
     /// gfab filename
-    pub gfab: String,
-    /// output GFA file [stdout]
-    pub gfa: Option<String>,
+    pub input_gfab: String,
+    /// output GFA filename [omit or - for standard output]
+    #[clap(short, default_value = "-")]
+    pub output_gfa: String,
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    util::check_gfab_filename_schema(&opts.gfab)?;
+    util::check_gfab_filename_schema(&opts.input_gfab)?;
 
     // formulate GenomicSQLite configuration JSON
     let mut dbopts = json::object::Object::new();
@@ -27,16 +28,16 @@ pub fn main(opts: &Opts) -> Result<()> {
 
     // open db
     let db = genomicsqlite::open(
-        &opts.gfab,
+        &opts.input_gfab,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
     )?;
     let gfab_version = util::check_gfab_schema(&db, "")?;
-    debug!("gfabase v{} created {}", gfab_version, opts.gfab);
+    debug!("gfabase v{} created {}", gfab_version, opts.input_gfab);
     util::check_gfab_version(&gfab_version)?;
 
     // open output writer
-    let mut writer_box = writer(opts.gfa.as_ref().map(String::as_str))?;
+    let mut writer_box = writer(&opts.output_gfa)?;
     let out = &mut *writer_box;
     write_header(&db, out)?;
     write_segments(&db, "", !opts.no_sequences, out)?;
@@ -47,16 +48,16 @@ pub fn main(opts: &Opts) -> Result<()> {
     Ok(())
 }
 
-pub fn writer(gfa_filename: Option<&str>) -> Result<Box<dyn io::Write>> {
-    match gfa_filename {
-        None | Some("-") | Some("") => Ok(Box::new(io::BufWriter::new(io::stdout()))),
-        Some(p) => {
-            if !p.ends_with(".gfa") {
-                warn!("output filename should end with .gfa")
-            }
-            Ok(Box::new(io::BufWriter::new(fs::File::create(p)?)))
-        }
+pub fn writer(gfa_filename: &str) -> Result<Box<dyn io::Write>> {
+    if gfa_filename.is_empty() || gfa_filename == "-" {
+        return Ok(Box::new(io::BufWriter::new(io::stdout())));
     }
+    if !gfa_filename.ends_with(".gfa") {
+        warn!("output filename should end with .gfa")
+    }
+    Ok(Box::new(io::BufWriter::new(fs::File::create(
+        gfa_filename,
+    )?)))
 }
 
 pub fn write_header(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
