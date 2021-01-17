@@ -67,14 +67,14 @@ is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "4795" "chr22-co
 
 # sub --cutpoints
 gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
-    --range --cutpoints 1 --view chr22:11,000,000-12,000,000 \
+    --range --cutpoints 2 --view chr22:11,000,000-12,000,000 \
     > "${TMPDIR}/megabase.gfa"
 is $(cat "${TMPDIR}/megabase.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "17d49156acd0ccad3452fb938b932234132a5d31f25ce92e7c655bff0628c654" "sub --cutpoints segments"
 is $(cat "${TMPDIR}/megabase.gfa" | grep "^L" | wc -l) "56" "sub --cutpoints links"
 
 gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
-    --range --cutpoints 1 --cutpoints-nt 10000 --view chr22:11,000,000-12,000,000 \
+    --range --cutpoints 2 --cutpoints-nt 10000 --view chr22:11,000,000-12,000,000 \
     > "${TMPDIR}/megabase10k.gfa"
 is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "5ebd4b41cce8f4a99ea2b42d090315d43162f87482678ef3f1c70c65bcf5ae51" "sub --cutpoints-nt segments"

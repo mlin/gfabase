@@ -399,8 +399,8 @@ fn expand_to_cutpoints(
         let mut start_segments_cursor = start_segments.query(NO_PARAMS)?;
         while let Some(row) = start_segments_cursor.next()? {
             let segment_id: i64 = row.get(0)?;
-            queue.push((radius, segment_id, false));
-            queue.push((radius, segment_id, true));
+            queue.push((radius - 1, segment_id, false));
+            queue.push((radius - 1, segment_id, true));
         }
     }
 
