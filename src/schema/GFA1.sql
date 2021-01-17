@@ -30,8 +30,7 @@ CREATE TABLE gfa1_segment_mapping(
     refseq_name TEXT NOT NULL COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
     refseq_begin INTEGER NOT NULL,           -- zero-based begin of associated range
     refseq_end INTEGER NOT NULL,             -- end (exclusive) of associated range
-    cigar TEXT,                              -- alignment of segment sequence to associated refseq range, if known
-    tags_json TEXT                           -- currently unused
+    tags_json TEXT                           -- extra info e.g. orientation, segment begin/end
 );
 
 -- Link

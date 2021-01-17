@@ -1,7 +1,7 @@
 CREATE UNIQUE INDEX gfa1_segment_name ON
     gfa1_segment_meta(name) WHERE name IS NOT NULL;
 
-CREATE INDEX gfa1_segment_mappings_segment ON
+CREATE INDEX gfa1_segment_mapping_segment ON
     gfa1_segment_mapping(segment_id);
 
 CREATE INDEX gfa1_link_from_to ON
