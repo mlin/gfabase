@@ -20,6 +20,9 @@ pub enum Error {
     #[error("[invalid GFA input] {0}")]
     InvalidGfa(String),
 
+    #[error("[invalid PAF/GAF input] {0}")]
+    InvalidPaf(String),
+
     #[error("[invalid .gfab][table = {table:?}, rowid = {rowid:?}] {message:?}")]
     InvalidGfab {
         message: String,

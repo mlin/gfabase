@@ -5,6 +5,7 @@ extern crate log;
 use fern::colors::{Color, ColoredLevelConfig};
 use log::error;
 
+mod add_mappings;
 mod connectivity;
 mod load;
 mod sub;
@@ -34,6 +35,9 @@ enum SubCommand {
 
     /// in.gfa => out.gfab
     Load(load::Opts),
+
+    /// assembly.gfab += mappings.{paf,gaf}
+    AddMappings(add_mappings::Opts),
 
     /// in.gfab => out.gfa
     View(view::Opts),
@@ -73,6 +77,7 @@ fn main() -> Result<()> {
     let rslt = match opts.subcmd {
         SubCommand::Version => version::main(),
         SubCommand::Load(subopts) => load::main(&subopts),
+        SubCommand::AddMappings(subopts) => add_mappings::main(&subopts),
         SubCommand::View(subopts) => view::main(&subopts),
         SubCommand::Sub(subopts) => sub::main(&subopts),
     };
