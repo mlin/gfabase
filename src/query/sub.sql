@@ -8,14 +8,14 @@ INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
 
 -- gfa1_segment_sequences copied in code (if not --no-sequences)
 
-INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json)
-    SELECT segment_id, refseq_name, refseq_begin, refseq_end, cigar, tags_json
+INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end, tags_json)
+    SELECT segment_id, refseq_name, refseq_begin, refseq_end, tags_json
     FROM input.gfa1_segment_mapping
     WHERE segment_id IN temp.sub_segments
     ORDER BY segment_id;
 
-INSERT INTO gfa1_link(from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json)
-    SELECT from_segment, from_reverse, to_segment, to_reverse, cigar, tags_json FROM input.gfa1_link
+INSERT INTO gfa1_link(from_segment, from_reverse, to_segment, to_reverse, tags_json)
+    SELECT from_segment, from_reverse, to_segment, to_reverse, tags_json FROM input.gfa1_link
     WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments
     ORDER BY from_segment, to_segment;
 
