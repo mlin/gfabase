@@ -11,7 +11,7 @@ use crate::util::Result;
 pub struct Opts {
     /// Assembly .gfab filename (to modify in-place; copy first if needed)
     pub gfab: String,
-    /// Uncompressed .paf or .gaf filename [omit or - for standard input]
+    /// Uncompressed .paf filename [omit or - for standard input]
     #[clap(default_value = "-")]
     pub mappings: String,
 
@@ -39,7 +39,7 @@ pub struct Opts {
 pub fn main(opts: &Opts) -> Result<()> {
     util::check_gfab_filename_schema(&opts.gfab)?;
     if opts.mappings == "-" && atty::is(atty::Stream::Stdin) {
-        bad_command!("pipe in .paf/.gaf data or supply uncompressed filename")
+        bad_command!("pipe in .paf data or supply uncompressed filename")
     }
 
     // formulate GenomicSQLite configuration JSON
@@ -59,7 +59,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     {
         // open transaction & apply schema
         let txn = db.transaction()?;
-        insert_gaf(&txn, &opts)?;
+        insert_paf(&txn, &opts)?;
         debug!("flushing {} ...", &opts.gfab);
         txn.commit()?;
     }
@@ -71,7 +71,7 @@ macro_rules! invalid_paf {
     ($($arg:tt)*) => (util::Error::InvalidPaf(format!($($arg)*)))
 }
 
-pub fn insert_gaf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
+pub fn insert_paf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
     // create temp table
     db.execute_batch(
         "CREATE TABLE temp.segment_mapping_hold(
@@ -93,10 +93,10 @@ pub fn insert_gaf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
     let mut insert_count = 0;
     let mut all_count = 0;
     let mut unknown_count = 0;
-    let insert_gaf1 = |tsv: &Vec<&str>| -> Result<()> {
+    let insert_paf1 = |tsv: &Vec<&str>| -> Result<()> {
         all_count += 1;
         if tsv.len() < 12 {
-            return Err(invalid_paf!("malformed PAF/GAF line: {}", tsv.join("\n")));
+            return Err(invalid_paf!("malformed PAF line: {}", tsv.join("\n")));
         }
         // check if mapping passes filters
         if opts.length > 0 {
@@ -173,7 +173,7 @@ pub fn insert_gaf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
         insert_count += 1;
         Ok(())
     };
-    util::iter_tsv_no_comments(insert_gaf1, &opts.mappings, Some('#' as u8))?;
+    util::iter_tsv_no_comments(insert_paf1, &opts.mappings, Some('#' as u8))?;
     if unknown_count > 0 {
         warn!(
             "ignored {} mappings with unknown query names",
