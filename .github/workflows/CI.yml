@@ -37,7 +37,7 @@ jobs:
     - name: test
       run: |
         sudo apt-get install -y aria2 tabix zstd
-        sudo pip3 install genomicsqlite
+        sudo pip3 install genomicsqlite miniwdl
         prove -v test/*.t
 
   linux-x86-64-exe:
