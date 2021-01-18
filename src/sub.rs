@@ -199,7 +199,13 @@ fn sub_gfa_write(
     out: &mut dyn io::Write,
 ) -> Result<()> {
     view::write_header(db, out)?;
-    view::write_segments(db, "WHERE segment_id IN temp.sub_segments", sequences, out)?;
+    view::write_segments(
+        db,
+        "WHERE segment_id IN temp.sub_segments",
+        sequences,
+        &mut view::NoTagEditor {},
+        out,
+    )?;
     view::write_links(
         db,
         "WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",

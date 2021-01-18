@@ -1,7 +1,8 @@
 use clap::Clap;
 use json::JsonValue;
 use log::{debug, info, warn};
-use rusqlite::{params, OpenFlags, NO_PARAMS};
+use num_format::{Locale, ToFormattedString};
+use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
 use std::{env, fs, io, path, process};
 
 use crate::bad_command;
@@ -18,6 +19,9 @@ pub struct Opts {
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
+    /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings
+    #[clap(long)]
+    pub guess_ranges: bool,
     /// Launch Bandage on output file (temporary file, if unspecified)
     #[clap(long)]
     pub bandage: bool,
@@ -31,7 +35,7 @@ pub fn main(opts: &Opts) -> Result<()> {
     dbopts.insert("immutable", json::JsonValue::from(true));
 
     // open db
-    let db = genomicsqlite::open(
+    let mut db = genomicsqlite::open(
         &opts.input_gfab,
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
@@ -40,31 +44,42 @@ pub fn main(opts: &Opts) -> Result<()> {
     debug!("gfabase v{} created {}", gfab_version, opts.input_gfab);
     util::check_gfab_version(&gfab_version)?;
 
-    if opts.output_gfa == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
-        // interactive mode: pipe into less -S
-        less(|less_in| {
-            write_header(&db, less_in)
-                .and_then(|_| write_segments(&db, "", !opts.no_sequences, less_in))
-                .and_then(|_| write_links(&db, "", less_in))
-                .and_then(|_| write_paths(&db, "", less_in))
-        })?
-    } else {
-        let mut output_gfa = String::from(&opts.output_gfa);
-        if opts.bandage && output_gfa == "-" {
-            output_gfa = bandage_temp_filename()?
-        }
+    {
+        let txn = db.transaction()?;
+        let mut tag_editor: Box<dyn TagEditor> = if opts.guess_ranges {
+            Box::new(SegmentRangeGuesser::new(&txn)?)
+        } else {
+            Box::new(NoTagEditor {})
+        };
 
-        {
-            let mut writer_box = writer(&output_gfa)?;
-            let out = &mut *writer_box;
-            write_header(&db, out)?;
-            write_segments(&db, "", !opts.no_sequences, out)?;
-            write_links(&db, "", out)?;
-            write_paths(&db, "", out)?
-        }
+        if opts.output_gfa == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
+            // interactive mode: pipe into less -S
+            less(|less_in| {
+                write_header(&txn, less_in)
+                    .and_then(|_| {
+                        write_segments(&txn, "", !opts.no_sequences, tag_editor.as_mut(), less_in)
+                    })
+                    .and_then(|_| write_links(&txn, "", less_in))
+                    .and_then(|_| write_paths(&txn, "", less_in))
+            })?
+        } else {
+            let mut output_gfa = String::from(&opts.output_gfa);
+            if opts.bandage && output_gfa == "-" {
+                output_gfa = bandage_temp_filename()?
+            }
 
-        if opts.bandage {
-            bandage(&output_gfa)?
+            {
+                let mut writer_box = writer(&output_gfa)?;
+                let out = &mut *writer_box;
+                write_header(&txn, out)?;
+                write_segments(&txn, "", !opts.no_sequences, tag_editor.as_mut(), out)?;
+                write_links(&txn, "", out)?;
+                write_paths(&txn, "", out)?
+            }
+
+            if opts.bandage {
+                bandage(&output_gfa)?
+            }
         }
     }
 
@@ -151,6 +166,7 @@ pub fn write_segments(
     db: &rusqlite::Connection,
     where_clause: &str,
     with_sequences: bool,
+    tag_editor: &mut dyn TagEditor,
     writer: &mut dyn io::Write,
 ) -> Result<()> {
     let segments_query_sql = String::from(if with_sequences {
@@ -180,7 +196,7 @@ pub fn write_segments(
         if let Some(sequence_length) = maybe_sequence_length {
             writer.write_fmt(format_args!("\tLN:i:{}", sequence_length))?;
         }
-        write_tags("gfa1_segments_meta", rowid, &tags_json, writer)?;
+        write_tags_with_editor("gfa1_segments_meta", rowid, &tags_json, tag_editor, writer)?;
         writer.write(b"\n")?;
     }
     Ok(())
@@ -286,13 +302,31 @@ pub fn write_paths(
     Ok(())
 }
 
-fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Write) -> Result<()> {
+pub trait TagEditor {
+    fn edit_tags(&mut self, rowid: i64, tags: &mut json::JsonValue) -> Result<()>;
+}
+
+pub struct NoTagEditor {}
+impl TagEditor for NoTagEditor {
+    fn edit_tags(&mut self, _rowid: i64, _tags: &mut json::JsonValue) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn write_tags_with_editor(
+    table: &str,
+    rowid: i64,
+    tags_json: &str,
+    editor: &mut dyn TagEditor,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
     let invalid = || util::Error::InvalidGfab {
         message: String::from("invalid tags_json"),
         table: String::from(table),
         rowid: rowid,
     };
-    let tags = json::parse(&tags_json).map_err(|_| invalid())?;
+    let mut tags = json::parse(&tags_json).map_err(|_| invalid())?;
+    editor.edit_tags(rowid, &mut tags)?;
     for (k, v) in tags.entries() {
         let kfields: Vec<&str> = k.split(':').collect();
         if kfields.len() != 2 {
@@ -309,4 +343,55 @@ fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Wri
         writer.write_fmt(format_args!("\t{}:{}", k, vstr))?;
     }
     Ok(())
+}
+
+fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Write) -> Result<()> {
+    write_tags_with_editor(table, rowid, tags_json, &mut NoTagEditor {}, writer)
+}
+
+pub struct SegmentRangeGuesser<'a> {
+    guess_range_query: rusqlite::Statement<'a>,
+}
+
+impl SegmentRangeGuesser<'_> {
+    pub fn new(db: &rusqlite::Connection) -> Result<SegmentRangeGuesser> {
+        Ok(SegmentRangeGuesser {
+            guess_range_query: db.prepare(
+                "SELECT
+                    refseq_name, json_extract(tags_json, '$.so:Z') AS orientation,
+                    min(refseq_begin), max(refseq_end),
+                    sum(refseq_end - refseq_begin) AS coverage
+                 FROM gfa1_segment_mapping WHERE segment_id = ?
+                 GROUP BY refseq_name, orientation ORDER BY coverage DESC LIMIT 1",
+            )?,
+        })
+    }
+
+    pub fn guess(&mut self, segment_id: i64) -> Result<Option<String>> {
+        let maybe_row: Option<(String, String, i64, i64)> = self
+            .guess_range_query
+            .query_row(params![segment_id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+            })
+            .optional()?;
+        if let Some((refseq_name, orientation, refseq_begin, refseq_end)) = maybe_row {
+            return Ok(Some(format!(
+                "{}{}:{}-{}",
+                if orientation == "-" { '<' } else { '>' },
+                refseq_name,
+                refseq_begin.to_formatted_string(&Locale::en),
+                refseq_end.to_formatted_string(&Locale::en)
+            )));
+        }
+        Ok(None)
+    }
+}
+
+impl TagEditor for SegmentRangeGuesser<'_> {
+    fn edit_tags(&mut self, rowid: i64, tags: &mut json::JsonValue) -> Result<()> {
+        if let Some(gr) = self.guess(rowid)? {
+            tags.insert("gr:Z", gr).unwrap()
+        }
+        Ok(())
+    }
 }

@@ -144,6 +144,9 @@ pub fn check_gfab_filename_schema(filename: &str) -> Result<semver::Version> {
         &json::object::Object::new(),
     ) {
         Ok(db) => check_gfab_schema(&db, ""),
-        _ => Err(Error::NotGfab),
+        Err(err) => {
+            debug!("check_gfab_filename_schema: {}", err);
+            Err(Error::NotGfab)
+        }
     }
 }
