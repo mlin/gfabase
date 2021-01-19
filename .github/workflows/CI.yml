@@ -77,7 +77,7 @@ jobs:
         submodules: recursive
     - name: dependencies
       run: |
-        BREW_DEPS="python@3.9 sqlite zstd aria2"
+        BREW_DEPS="python@3.9 sqlite zstd aria2 coreutils"
         rm -f /usr/local/bin/2to3  # https://github.com/pypa/pipenv/issues/3831
         brew update || (sleep 2; brew update)
         for dep in $BREW_DEPS ; do
