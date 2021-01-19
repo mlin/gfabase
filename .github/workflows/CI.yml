@@ -93,7 +93,7 @@ jobs:
         echo "PREFIX=$(brew --prefix)" >> $GITHUB_ENV
         echo "PATH=${PREFIX}/opt/python/libexec/bin:${PREFIX}/opt/sqlite/bin:${PATH}" >> $GITHUB_ENV
         echo "LDFLAGS=-L$(brew --prefix)/lib -L$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
-        echo 'RUSTFLAGS="-C target-cpu=ivybridge -C link-args=-Wl,-rpath,@executable_path/."' >> $GITHUB_ENV
+        echo 'RUSTFLAGS=-C target-cpu=ivybridge -C link-args=-Wl,-rpath,@executable_path/.' >> $GITHUB_ENV
         # used by rusqlite:
         echo "SQLITE3_INCLUDE_DIR=$(brew --prefix)/opt/sqlite/include" >> $GITHUB_ENV
         echo "SQLITE3_LIB_DIR=$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
