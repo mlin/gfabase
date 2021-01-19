@@ -88,7 +88,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 
             if opts.bandage {
                 if let Some(ref mut guesser) = maybe_guesser {
-                    guesser.write_bandage_csv(&txn, &output_gfa)?
+                    guesser.write_bandage_csv(&output_gfa)?
                 }
                 bandage(&output_gfa)?
             }
@@ -356,8 +356,12 @@ fn write_tags(table: &str, rowid: i64, tags_json: &str, writer: &mut dyn io::Wri
     write_tags_with_editor(table, rowid, tags_json, |_, _| Ok(()), writer)
 }
 
+// Helpers roughly guessing a genomic range for a segment based on its PAF mappings. Selects the
+// chromosome with the most coverage in the mappings, then the min and max mapped position on that
+// chromosome.
 pub struct SegmentRangeGuesser<'a> {
     getter: rusqlite::Statement<'a>,
+    csv_query: rusqlite::Statement<'a>,
 }
 
 impl<'a> SegmentRangeGuesser<'_> {
@@ -395,10 +399,17 @@ impl<'a> SegmentRangeGuesser<'_> {
         );
         let n = db.execute(&sql, NO_PARAMS)?;
         info!("guessed ranges for {} segments", n);
+        // prepare queries on temp.segment_range_guess
         Ok(SegmentRangeGuesser {
             getter: db.prepare(
                 "SELECT refseq_name, refseq_begin, refseq_end
                  FROM temp.segment_range_guess WHERE segment_id = ?",
+            )?,
+            csv_query: db.prepare(
+                "SELECT
+                    coalesce(name, cast(segment_id AS TEXT)),
+                    refseq_name, refseq_begin, refseq_end
+                 FROM temp.segment_range_guess LEFT JOIN gfa1_segment_meta USING(segment_id)",
             )?,
         })
     }
@@ -421,23 +432,14 @@ impl<'a> SegmentRangeGuesser<'_> {
         Ok(None)
     }
 
-    pub fn write_bandage_csv(
-        &mut self,
-        db: &'a rusqlite::Connection,
-        gfa_filename: &str,
-    ) -> Result<()> {
+    pub fn write_bandage_csv(&mut self, gfa_filename: &str) -> Result<()> {
+        // write a CSV file with the guessed ranges that Bandage can show as labels
         let csv_filename = String::from(gfa_filename.strip_suffix(".gfa").unwrap_or(gfa_filename))
             + ".guessed_ranges.csv";
         {
             let mut writer = io::BufWriter::new(fs::File::create(&csv_filename)?);
             writer.write_fmt(format_args!("Name,Guessed range\n"))?;
-            let mut select_guessed_ranges = db.prepare(
-                "SELECT
-                    coalesce(name, cast(segment_id AS TEXT)),
-                    refseq_name, refseq_begin, refseq_end
-                 FROM temp.segment_range_guess LEFT JOIN gfa1_segment_meta USING(segment_id)",
-            )?;
-            let mut cursor = select_guessed_ranges.query(NO_PARAMS)?;
+            let mut cursor = self.csv_query.query(NO_PARAMS)?;
             while let Some(row) = cursor.next()? {
                 let name: String = row.get(0)?;
                 let refseq_name: String = row.get(1)?;

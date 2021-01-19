@@ -204,7 +204,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
         if opts.bandage {
             if let Some(ref mut guesser) = maybe_guesser {
-                guesser.write_bandage_csv(&txn, &output_gfa)?
+                guesser.write_bandage_csv(&output_gfa)?
             }
             view::bandage(&output_gfa)?
         }
