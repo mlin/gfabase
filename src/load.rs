@@ -225,11 +225,12 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
 
     // closure to process one record
     let mut other_record_types = HashSet::new();
-    let dispatch = |tsv: &Vec<&str>| -> Result<()> {
+    let dispatch = |line_num: usize, tsv: &Vec<&str>| -> Result<()> {
         match tsv[0] {
             "S" => {
                 records += 1;
                 insert_gfa1_segment(
+                    line_num,
                     tsv,
                     txn,
                     !opts.no_sequences,
@@ -244,11 +245,12 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
             }
             "L" => {
                 records += 1;
-                insert_gfa1_link(tsv, &mut stmt_insert_link, &segments_by_name)
+                insert_gfa1_link(line_num, tsv, &mut stmt_insert_link, &segments_by_name)
             }
             "P" => {
                 records += 1;
                 insert_gfa1_path(
+                    line_num,
                     tsv,
                     txn,
                     opts.always_names,
@@ -265,7 +267,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
                 if maybe_header.is_some() {
                     invalid_gfa!("multiple header (H) records");
                 }
-                maybe_header = Some(prepare_tags_json(tsv, 1)?);
+                maybe_header = Some(prepare_tags_json(line_num, tsv, 1)?);
                 Ok(())
             }
             other => {
@@ -295,6 +297,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
 }
 
 fn insert_gfa1_segment(
+    line_num: usize,
     tsv: &Vec<&str>,
     txn: &Transaction,
     sequences: bool,
@@ -322,7 +325,7 @@ fn insert_gfa1_segment(
     } else {
         None
     };
-    let mut tags_json = prepare_tags_json(tsv, 3)?;
+    let mut tags_json = prepare_tags_json(line_num, tsv, 3)?;
 
     // remove tag LN:i if present because we'll keep a dedicated column for this info (make sure
     // it's consistent)
@@ -330,7 +333,8 @@ fn insert_gfa1_segment(
     let maybe_sequence_len = match (maybe_sequence, ln_tag) {
         (Some(seq), Some(lni)) if lni != (seq.len() as i64) => {
             invalid_gfa!(
-                "segment with inconsistent sequence length and LN tag: {}",
+                "(Ln {}) segment with inconsistent sequence length and LN tag: {}",
+                line_num,
                 tsv[1]
             )
         }
@@ -397,8 +401,8 @@ fn insert_gfa1_segment(
             })
             .map_err(|_| {
                 util::Error::InvalidGfa(format!(
-                    "unable to parse rr:Z as genomic range (e.g. chr1:2,345-6,789): {}",
-                    rr
+                    "(Ln {}) unable to parse rr:Z as genomic range (e.g. chr1:2,345-6,789): {}",
+                    line_num, rr
                 ))
             })?;
     }
@@ -407,6 +411,7 @@ fn insert_gfa1_segment(
 }
 
 fn insert_gfa1_link(
+    line_num: usize,
     tsv: &Vec<&str>,
     stmt: &mut Statement,
     segments_by_name: &HashMap<String, i64>,
@@ -416,14 +421,16 @@ fn insert_gfa1_link(
         invalid_gfa!("malformed L line: {}", tsv.join("\t"));
     }
 
-    let (from_segment, from_reverse) = segment_and_orientation(tsv[1], tsv[2], segments_by_name)?;
-    let (to_segment, to_reverse) = segment_and_orientation(tsv[3], tsv[4], segments_by_name)?;
+    let (from_segment, from_reverse) =
+        segment_and_orientation(line_num, tsv[1], tsv[2], segments_by_name)?;
+    let (to_segment, to_reverse) =
+        segment_and_orientation(line_num, tsv[3], tsv[4], segments_by_name)?;
     let cigar = if tsv.len() > 5 && tsv[5] != "*" {
         Some(tsv[5])
     } else {
         None
     };
-    let tags_json = prepare_tags_json(tsv, 6)?;
+    let tags_json = prepare_tags_json(line_num, tsv, 6)?;
     let tags_json_text = tags_json.dump();
     stmt.execute(params![
         from_segment,
@@ -441,6 +448,7 @@ fn insert_gfa1_link(
 }
 
 fn insert_gfa1_path(
+    line_num: usize,
     tsv: &Vec<&str>,
     txn: &Transaction,
     always_names: bool,
@@ -450,7 +458,7 @@ fn insert_gfa1_path(
 ) -> Result<()> {
     assert_eq!(tsv[0], "P");
     if tsv.len() < 3 {
-        invalid_gfa!("malformed P line: {}", tsv.join("\t"));
+        invalid_gfa!("(Ln {}) malformed P line: {}", line_num, tsv.join("\t"));
     }
 
     let rowid = if !always_names {
@@ -465,7 +473,7 @@ fn insert_gfa1_path(
     } else {
         None
     };
-    let tags_json = prepare_tags_json(tsv, 4)?;
+    let tags_json = prepare_tags_json(line_num, tsv, 4)?;
     let tags_json_text = tags_json.dump();
 
     stmt_path.execute(params![
@@ -482,15 +490,21 @@ fn insert_gfa1_path(
     let segs: Vec<&str> = tsv[2].split(',').collect();
     if let Some(cigars) = &maybe_cigars {
         if cigars.len() + 1 != segs.len() {
-            invalid_gfa!("incorrect overlaps: {}", tsv.join("\t"));
+            invalid_gfa!(
+                "(Ln {}) incorrect overlaps: {} CIGARs != {} segments - 1",
+                line_num,
+                cigars.len(),
+                segs.len()
+            );
         }
     }
     for ord in 0..segs.len() {
         let ele = segs[ord];
         if ele.len() < 2 {
-            invalid_gfa!("malformed path: {}", tsv[2]);
+            invalid_gfa!("(Ln {}) malformed path: {}", line_num, tsv[2]);
         }
         let (segment_id, reverse) = segment_and_orientation(
+            line_num,
             &ele[..(ele.len() - 1)],
             &ele[(ele.len() - 1)..ele.len()],
             segments_by_name,
@@ -511,6 +525,7 @@ fn insert_gfa1_path(
 }
 
 fn segment_and_orientation(
+    line_num: usize,
     segment: &str,
     orientation: &str,
     segments_by_name: &HashMap<String, i64>,
@@ -520,13 +535,21 @@ fn segment_and_orientation(
     } else if let Some(idr) = segments_by_name.get(segment) {
         *idr
     } else {
-        invalid_gfa!("unknown segment in link/path: {}", segment)
+        invalid_gfa!(
+            "(Ln {}) unknown segment in link/path: {}",
+            line_num,
+            segment
+        )
     };
     let reverse = match orientation {
         "+" => 0,
         "-" => 1,
         _ => {
-            invalid_gfa!("malformed segment orientation: {}", orientation)
+            invalid_gfa!(
+                "(Ln {}) malformed segment orientation: {}",
+                line_num,
+                orientation
+            )
         }
     };
     Ok((segment_id, reverse))
@@ -541,31 +564,42 @@ pub fn name_to_id(name: &str) -> Option<i64> {
     }
 }
 
-fn prepare_tags_json(tsv: &Vec<&str>, offset: usize) -> Result<json::object::Object> {
+fn prepare_tags_json(
+    line_num: usize,
+    tsv: &Vec<&str>,
+    offset: usize,
+) -> Result<json::object::Object> {
     let mut ans = json::object::Object::new();
     if tsv.len() > offset {
         for cursor in offset..tsv.len() {
+            if tsv[cursor].is_empty() && cursor == tsv.len() - 1 {
+                continue;
+            }
             let fields: Vec<&str> = tsv[cursor].splitn(3, ':').collect();
             if fields.len() != 3 || fields[0].is_empty() || fields[1].is_empty() {
-                invalid_gfa!("malformed tag: {}", tsv[cursor]);
+                invalid_gfa!("(Ln {}) malformed tag: {}", line_num, tsv[cursor]);
             };
             let v = match fields[1] {
                 "A" | "Z" | "H" => json::JsonValue::from(fields[2]),
                 "i" => {
                     let iv: i64 = fields[2].parse().or_else(|_| {
-                        invalid_gfa!("malformed tag integer: {}", tsv[cursor]);
+                        invalid_gfa!("(Ln {}) malformed tag integer: {}", line_num, tsv[cursor]);
                     })?;
                     json::JsonValue::from(iv)
                 }
                 "f" => {
                     let fv: f64 = fields[2].parse().or_else(|_| {
-                        invalid_gfa!("malformed tag float: {}", tsv[cursor]);
+                        invalid_gfa!("(Ln {}) malformed tag float: {}", line_num, tsv[cursor]);
                     })?;
                     json::JsonValue::from(fv)
                 }
                 // TODO: B & J
                 _ => {
-                    invalid_gfa!("tag type not yet supported: {}", tsv[cursor]);
+                    invalid_gfa!(
+                        "(Ln {}) tag type not yet supported: {}",
+                        line_num,
+                        tsv[cursor]
+                    );
                 }
             };
             ans.insert(&format!("{}:{}", fields[0], fields[1]), v)

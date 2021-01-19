@@ -93,15 +93,19 @@ pub fn insert_paf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
     let mut insert_count = 0;
     let mut all_count = 0;
     let mut unknown_count = 0;
-    let insert_paf1 = |tsv: &Vec<&str>| -> Result<()> {
+    let insert_paf1 = |line_num, tsv: &Vec<&str>| -> Result<()> {
         all_count += 1;
         if tsv.len() < 12 {
-            return Err(invalid_paf!("malformed PAF line: {}", tsv.join("\n")));
+            return Err(invalid_paf!("malformed PAF line {}", line_num));
         }
         // check if mapping passes filters
         if opts.length > 0 {
             let aln_length: u64 = tsv[10].parse().map_err(|_| {
-                invalid_paf!("malformed alignment block length: {}", tsv.join("\n"))
+                invalid_paf!(
+                    "(Ln {}) malformed alignment block length: {}",
+                    line_num,
+                    tsv[10]
+                )
             })?;
             if aln_length < opts.length {
                 return Ok(());
@@ -110,7 +114,7 @@ pub fn insert_paf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
         if opts.quality > 0 {
             let map_q: u64 = tsv[11]
                 .parse()
-                .map_err(|_| invalid_paf!("malformed mapQ: {}", tsv.join("\n")))?;
+                .map_err(|_| invalid_paf!("(Ln {}) malformed mapQ: {}", line_num, tsv[11]))?;
             if map_q < opts.quality {
                 return Ok(());
             }
@@ -141,21 +145,26 @@ pub fn insert_paf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
         let segment_id = maybe_segment_id.unwrap();
         let segment_begin: u64 = tsv[2]
             .parse()
-            .map_err(|_| invalid_paf!("malformed query start: {}", tsv.join("\n")))?;
+            .map_err(|_| invalid_paf!("(Ln {}) malformed query start: {}", line_num, tsv[2]))?;
         let segment_end: u64 = tsv[3]
             .parse()
-            .map_err(|_| invalid_paf!("malformed query end: {}", tsv.join("\n")))?;
+            .map_err(|_| invalid_paf!("(Ln {}) malformed query end: {}", line_num, tsv[3]))?;
         // parse target range
         let target_name = tsv[5];
         // TODO: handle GAF path if target_name starts with '>' or '<'
         let target_begin: u64 = tsv[7]
             .parse()
-            .map_err(|_| invalid_paf!("malformed target start: {}", tsv.join("\n")))?;
+            .map_err(|_| invalid_paf!("(Ln {}) malformed target start: {}", line_num, tsv[7]))?;
         let target_end: u64 = tsv[8]
             .parse()
-            .map_err(|_| invalid_paf!("malformed target end: {}", tsv.join("\n")))?;
+            .map_err(|_| invalid_paf!("(Ln {}) malformed target end: {}", line_num, tsv[8]))?;
         if target_begin > target_end {
-            return Err(invalid_paf!("target begin > end: {}", tsv.join("\n")))?;
+            return Err(invalid_paf!(
+                "(Ln {}) target begin > end: {} > {}",
+                line_num,
+                target_begin,
+                target_end
+            ))?;
         }
         // prepare tags
         let mut tags_json = json::object::Object::new();

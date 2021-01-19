@@ -60,7 +60,7 @@ macro_rules! bad_command {
 /// character, if any, e.g. `Some('#' as u8)`. Set `filename` empty to read standard input.
 pub fn fold_tsv_no_comments<F, X>(mut f: F, x0: X, filename: &str, comment: Option<u8>) -> Result<X>
 where
-    F: FnMut(X, &Vec<&str>) -> Result<X>,
+    F: FnMut(usize, X, &Vec<&str>) -> Result<X>,
 {
     // https://stackoverflow.com/a/49964042/13393076
     let reader: Box<dyn io::BufRead> = if filename.is_empty() || filename == "-" {
@@ -70,10 +70,12 @@ where
     };
 
     let mut x = x0;
+    let mut line_num = 0;
     for readline in reader.lines() {
         let line = readline?;
+        line_num += 1;
         if comment.map_or(true, |ch| (line.is_empty() || line.as_bytes()[0] != ch)) {
-            x = f(x, &line.split('\t').collect())?
+            x = f(line_num, x, &line.split('\t').collect())?
         }
     }
     Ok(x)
@@ -82,9 +84,9 @@ where
 // Iterate `f` over tab-separated lines of the file
 pub fn iter_tsv_no_comments<F>(mut f: F, filename: &str, comment: Option<u8>) -> Result<()>
 where
-    F: FnMut(&Vec<&str>) -> Result<()>,
+    F: FnMut(usize, &Vec<&str>) -> Result<()>,
 {
-    fold_tsv_no_comments(|(), tsv| f(tsv), (), filename, comment)
+    fold_tsv_no_comments(|line_num, (), tsv| f(line_num, tsv), (), filename, comment)
 }
 
 pub fn delete_existing_file(filename: &str) -> Result<()> {

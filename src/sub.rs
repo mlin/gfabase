@@ -370,7 +370,7 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
             );
             db.execute_batch(&connected_sql)?;
         } else {
-            warn!("input .gfab lacks connectivity index; discovering connected component(s) on-the-fly...");
+            warn!("input .gfab lacks connectivity index; discovering connected component(s) on-the-fly (requires SQLite >= 3.34.0)...");
             let connected_sql = include_str!("query/connected.sql").to_string()
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
             db.execute_batch(&connected_sql)?;
