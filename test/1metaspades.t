@@ -15,7 +15,11 @@ PATH="$(pwd)/target/release:${PATH}"
 gfabase version
 is "$?" "0" "gfabase version"
 
-export TMPDIR=$(mktemp -d --tmpdir gfabase_metaspades_test_XXXXXX)
+if [[ -z $TMPDIR ]]; then
+    TMPDIR=/tmp
+fi
+TMPDIR=$(mktemp -d "${TMPDIR}/gfabase_metaspades_test_XXXXXX")
+export TMPDIR=$(realpath "$TMPDIR")
 
 # extract metaspades GFA
 zstd -dc test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa"

@@ -19,7 +19,11 @@ PATH="$(pwd)/target/release:${PATH}"
 gfabase version
 is "$?" "0" "gfabase version"
 
-export TMPDIR=$(mktemp -d --tmpdir gfabase_cli_test_XXXXXX)
+if [[ -z $TMPDIR ]]; then
+    TMPDIR=/tmp
+fi
+TMPDIR=$(mktemp -d "${TMPDIR}/gfabase_cli_test_XXXXXX")
+export TMPDIR=$(realpath "$TMPDIR")
 
 # extract test rGFA
 zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa"
