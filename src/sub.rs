@@ -203,7 +203,7 @@ fn sub_gfa_write(
         db,
         "WHERE segment_id IN temp.sub_segments",
         sequences,
-        &mut view::NoTagEditor {},
+        |_, _| Ok(()),
         out,
     )?;
     view::write_links(
