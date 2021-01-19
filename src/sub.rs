@@ -54,6 +54,10 @@ pub struct Opts {
     #[clap(long)]
     pub bandage: bool,
 
+    /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings (implies --view)
+    #[clap(long)]
+    pub guess_ranges: bool,
+
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
@@ -74,7 +78,7 @@ pub fn main(opts: &Opts) -> Result<()> {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
     util::check_gfab_filename_schema(&opts.gfab)?;
-    if opts.view || opts.bandage || opts.outfile == "-" {
+    if opts.view || opts.bandage || opts.guess_ranges || opts.outfile == "-" {
         sub_gfa(opts)
     } else {
         sub_gfab(opts)
@@ -170,9 +174,18 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
 
+    let mut maybe_guesser = if opts.guess_ranges {
+        Some(view::SegmentRangeGuesser::new(
+            &txn,
+            "WHERE segment_id IN temp.sub_segments",
+        )?)
+    } else {
+        None
+    };
+
     if opts.outfile == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
         // interactive mode: pipe into less -S
-        view::less(|less_in| sub_gfa_write(&txn, !opts.no_sequences, less_in))?
+        view::less(|less_in| sub_gfa_write(&txn, &mut maybe_guesser, !opts.no_sequences, less_in))?
     } else {
         let mut output_gfa = String::from(&opts.outfile);
         if opts.bandage && output_gfa == "-" {
@@ -181,13 +194,22 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
         {
             let mut writer_box = view::writer(&output_gfa)?;
-            sub_gfa_write(&txn, !opts.no_sequences, &mut *writer_box)?;
+            sub_gfa_write(
+                &txn,
+                &mut maybe_guesser,
+                !opts.no_sequences,
+                &mut *writer_box,
+            )?;
         }
 
         if opts.bandage {
+            if let Some(ref mut guesser) = maybe_guesser {
+                guesser.write_bandage_csv(&txn, &output_gfa)?
+            }
             view::bandage(&output_gfa)?
         }
     }
+    std::mem::drop(maybe_guesser);
 
     txn.rollback()?;
     Ok(())
@@ -195,15 +217,25 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
 fn sub_gfa_write(
     db: &rusqlite::Connection,
+    maybe_guesser: &mut Option<view::SegmentRangeGuesser>,
     sequences: bool,
     out: &mut dyn io::Write,
 ) -> Result<()> {
+    let mut tag_editor = |segment_id: i64, tags: &mut json::JsonValue| -> Result<()> {
+        if let Some(ref mut guesser) = maybe_guesser {
+            if let Some(gr) = guesser.get(segment_id)? {
+                tags.insert("gr:Z", gr).unwrap()
+            }
+        }
+        Ok(())
+    };
+
     view::write_header(db, out)?;
     view::write_segments(
         db,
         "WHERE segment_id IN temp.sub_segments",
         sequences,
-        |_, _| Ok(()),
+        &mut tag_editor,
         out,
     )?;
     view::write_links(

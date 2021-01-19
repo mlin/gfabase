@@ -1,4 +1,5 @@
 use clap::Clap;
+use io::Write;
 use json::JsonValue;
 use log::{debug, info, warn};
 use num_format::{Locale, ToFormattedString};
@@ -19,12 +20,12 @@ pub struct Opts {
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
-    /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings
-    #[clap(long)]
-    pub guess_ranges: bool,
     /// Launch Bandage on output file (temporary file, if unspecified)
     #[clap(long)]
     pub bandage: bool,
+    /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings
+    #[clap(long)]
+    pub guess_ranges: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
@@ -86,6 +87,9 @@ pub fn main(opts: &Opts) -> Result<()> {
             }
 
             if opts.bandage {
+                if let Some(ref mut guesser) = maybe_guesser {
+                    guesser.write_bandage_csv(&txn, &output_gfa)?
+                }
                 bandage(&output_gfa)?
             }
         }
@@ -370,8 +374,7 @@ impl<'a> SegmentRangeGuesser<'_> {
             NO_PARAMS,
         )?;
         let sql = format!(
-            "
-            WITH summary AS
+            "WITH summary AS
                 (SELECT
                     segment_id, refseq_name,
                     min(refseq_begin) AS min_begin, max(refseq_end) AS max_end,
@@ -379,7 +382,7 @@ impl<'a> SegmentRangeGuesser<'_> {
                 FROM gfa1_segment_mapping
                 {}
                 GROUP BY segment_id, refseq_name)
-            INSERT INTO temp.segment_range_guess(segment_id, refseq_name, refseq_begin, refseq_end)
+             INSERT INTO temp.segment_range_guess(segment_id, refseq_name, refseq_begin, refseq_end)
                 SELECT segment_id, refseq_name, min_begin, max_end
                 FROM
                     (SELECT
@@ -416,5 +419,40 @@ impl<'a> SegmentRangeGuesser<'_> {
             )));
         }
         Ok(None)
+    }
+
+    pub fn write_bandage_csv(
+        &mut self,
+        db: &'a rusqlite::Connection,
+        gfa_filename: &str,
+    ) -> Result<()> {
+        let csv_filename = String::from(gfa_filename.strip_suffix(".gfa").unwrap_or(gfa_filename))
+            + ".guessed_ranges.csv";
+        {
+            let mut writer = io::BufWriter::new(fs::File::create(&csv_filename)?);
+            writer.write_fmt(format_args!("Name,Guessed range\n"))?;
+            let mut select_guessed_ranges = db.prepare(
+                "SELECT
+                    coalesce(name, cast(segment_id AS TEXT)),
+                    refseq_name, refseq_begin, refseq_end
+                 FROM temp.segment_range_guess LEFT JOIN gfa1_segment_meta USING(segment_id)",
+            )?;
+            let mut cursor = select_guessed_ranges.query(NO_PARAMS)?;
+            while let Some(row) = cursor.next()? {
+                let name: String = row.get(0)?;
+                let refseq_name: String = row.get(1)?;
+                let refseq_begin: i64 = row.get(2)?;
+                let refseq_end: i64 = row.get(3)?;
+                writer.write_fmt(format_args!(
+                    "\"{}\",\"~{}:{}-{}\"\n",
+                    name,
+                    refseq_name,
+                    refseq_begin.to_formatted_string(&Locale::en),
+                    refseq_end.to_formatted_string(&Locale::en)
+                ))?;
+            }
+        }
+        info!("wrote CSV with guessed segment ranges to {}", csv_filename);
+        Ok(())
     }
 }
