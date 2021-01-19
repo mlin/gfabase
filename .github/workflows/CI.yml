@@ -67,3 +67,47 @@ jobs:
       with:
         name: gfabase-linux-x86-64
         path: gfabase
+
+  macOS-x86-64-exe:
+    runs-on: macOS-10.15
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+        submodules: recursive
+    - name: dependencies
+      run: |
+        BREW_DEPS="python@3.9 sqlite zstd aria2 tabix"
+        rm -f /usr/local/bin/2to3  # https://github.com/pypa/pipenv/issues/3831
+        brew update || (sleep 2; brew update)
+        for dep in $BREW_DEPS ; do
+          brew install $dep || brew upgrade $dep
+        done
+    - name: rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        default: true
+    - name: build environment
+      run:
+        echo "PREFIX=$(brew --prefix)" >> $GITHUB_ENV
+        echo "PATH=${PREFIX}/opt/python/libexec/bin:${PREFIX}/opt/sqlite/bin:${PATH}" >> $GITHUB_ENV
+        echo "LDFLAGS=-L$(brew --prefix)/lib -L$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
+        echo 'RUSTFLAGS="-C target-cpu=ivybridge -C link-args=-Wl,-rpath,@executable_path/."' >> $GITHUB_ENV
+        # used by rusqlite:
+        echo "SQLITE3_INCLUDE_DIR=$(brew --prefix)/opt/sqlite/include" >> $GITHUB_ENV
+        echo "SQLITE3_LIB_DIR=$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
+    - name: build
+      run: ./cargo build --release && target/release/gfabase version
+    - name: test
+      run: |
+        sudo apt-get install -y aria2 tabix zstd
+        sudo pip3 install genomicsqlite miniwdl
+        prove -v test/*.t
+        cp target/release/gfabase ./
+    - name: symbols & digests
+      run: ./gfabase version && otool -L gfabase && sha256sum gfabase
+    - uses: actions/upload-artifact@v2
+      with:
+        name: gfabase-macOS-x86-64
+        path: gfabase
