@@ -98,13 +98,10 @@ jobs:
         echo "SQLITE3_INCLUDE_DIR=$(brew --prefix)/opt/sqlite/include" >> $GITHUB_ENV
         echo "SQLITE3_LIB_DIR=$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
     - name: build
-      run: ./cargo build --release && target/release/gfabase version
+      run: ./cargo build --release && cp target/release/gfabase ./ && ./gfabase version
     - name: test
       run: |
-        sudo apt-get install -y aria2 zstd
-        sudo pip3 install genomicsqlite
         prove -v test/{1,2}*.t
-        cp target/release/gfabase ./
     - name: symbols & digests
       run: ./gfabase version && otool -L gfabase && sha256sum gfabase
     - uses: actions/upload-artifact@v2
