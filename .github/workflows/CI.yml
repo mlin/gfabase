@@ -130,6 +130,7 @@ jobs:
         name: gfabase-macOS-x86-64
     - name: detect GIT_REVISION
       run: |
+        git fetch origin --tags
         echo "GIT_REVISION=$(git describe --tags --always)" >> $GITHUB_ENV
     - uses: actions/upload-artifact@v2
       with:
