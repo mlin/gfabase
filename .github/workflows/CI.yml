@@ -64,7 +64,7 @@ jobs:
     - name: digest
       run: |
         mv gfabase gfabase-linux-x86-64
-        ./gfabase-linux-x86-64 version && sha256sum gfabase
+        ./gfabase-linux-x86-64 version && sha256sum gfabase-linux-x86-64
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-linux-x86-64
@@ -105,7 +105,7 @@ jobs:
       run: |
         prove -v test/{1,2}*.t
     - name: symbols & digests
-      run: otool -L gfabase && (otool -l gfabase | grep RPATH) && ./gfabase-macOS-x86-64 version && sha256sum gfabase
+      run: otool -L gfabase && (otool -l gfabase | grep RPATH) && ./gfabase-macOS-x86-64 version && sha256sum gfabase-macOS-x86-64
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-macOS-x86-64
