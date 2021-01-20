@@ -120,6 +120,8 @@ jobs:
     needs: [linux-x86-64-exe, macOS-x86-64-exe]
     steps:
     - uses: actions/checkout@v2
+      with:
+          fetch-depth: 0
     - name: fetch linux exe
       uses: actions/download-artifact@v2
       with:
