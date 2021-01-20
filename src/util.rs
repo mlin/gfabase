@@ -124,6 +124,14 @@ pub fn check_gfab_schema(db: &rusqlite::Connection, schema: &str) -> Result<semv
 pub fn check_gfab_version(gfab_version: &semver::Version) -> Result<()> {
     let req = semver::VersionReq::parse(GFAB_VERSION_REQ).unwrap();
     if req.matches(gfab_version) {
+        let my_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        if *gfab_version > my_version {
+            warn!(
+                "input .gfab from a newer version of gfabase ({} > {})",
+                gfab_version.to_string(),
+                my_version.to_string()
+            );
+        }
         return Ok(());
     }
     Err(Error::IncompatibleGfab {

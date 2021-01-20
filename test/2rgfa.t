@@ -19,7 +19,11 @@ PATH="$(pwd)/target/release:${PATH}"
 gfabase version
 is "$?" "0" "gfabase version"
 
-export TMPDIR=$(mktemp -d --tmpdir gfabase_cli_test_XXXXXX)
+if [[ -z $TMPDIR ]]; then
+    TMPDIR=/tmp
+fi
+TMPDIR=$(mktemp -d "${TMPDIR}/gfabase_cli_test_XXXXXX")
+export TMPDIR=$(realpath "$TMPDIR")
 
 # extract test rGFA
 zstd -dc test/data/GRCh38-20-0.10b.chr22_chrY.gfa.zst > "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa"
@@ -38,8 +42,8 @@ seq_digest=$(cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" | grep "^S" | cut -f
 roundtrip_seq_digest=$(cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.roundtrip.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum)
 is "$roundtrip_seq_digest" "$seq_digest" "sequences roundtrip identical"
 
-is `cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" | grep "^L" | wc -l` \
-   `cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.roundtrip.gfa" | grep "^L" | wc -l` \
+is `cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfa" | grep "^L" | wc -l | tr -d ' '` \
+   `cat "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.roundtrip.gfa" | grep "^L" | wc -l | tr -d ' '` \
    "links count roundtrip identical"
 
 # extract chr22 segments only
@@ -54,16 +58,16 @@ is "$sub_chr22_digest" "$chr22_digest" "chr22 reference segments"
 gfabase sub \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" -o "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" \
     chr22:1-999999999 --range --connected
-is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l)" "3319" "chr22-connected segments"
-is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l)" "4795" "chr22-connected links"
+is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^S" | wc -l | tr -d ' ')" "3319" "chr22-connected segments"
+is "$(gfabase view "${TMPDIR}/GRCh38-20-0.10b.chr22.gfab" | grep "^L" | wc -l | tr -d ' ')" "4795" "chr22-connected links"
 
 # sub --view to stream GFA directly
 gfabase sub --view \
     "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
     chr22:1-999999999 --range --connected \
     > "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa"
-is "$(grep "^S" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "3319" "chr22-connected segments --view"
-is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l)" "4795" "chr22-connected links --view"
+is "$(grep "^S" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l | tr -d ' ')" "3319" "chr22-connected segments --view"
+is "$(grep "^L" "${TMPDIR}/GRCh38-20-0.10b.chr22.gfa" | wc -l | tr -d ' ')" "4795" "chr22-connected links --view"
 
 # sub --cutpoints
 gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
@@ -71,13 +75,13 @@ gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
     > "${TMPDIR}/megabase.gfa"
 is $(cat "${TMPDIR}/megabase.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "17d49156acd0ccad3452fb938b932234132a5d31f25ce92e7c655bff0628c654" "sub --cutpoints segments"
-is $(cat "${TMPDIR}/megabase.gfa" | grep "^L" | wc -l) "56" "sub --cutpoints links"
+is $(cat "${TMPDIR}/megabase.gfa" | grep "^L" | wc -l | tr -d ' ') "56" "sub --cutpoints links"
 
 gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
     --range --cutpoints 2 --cutpoints-nt 10000 --view chr22:11,000,000-12,000,000 \
     > "${TMPDIR}/megabase10k.gfa"
 is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "5ebd4b41cce8f4a99ea2b42d090315d43162f87482678ef3f1c70c65bcf5ae51" "sub --cutpoints-nt segments"
-is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^L" | wc -l) "59" "sub --cutpoints-nt links"
+is $(cat "${TMPDIR}/megabase10k.gfa" | grep "^L" | wc -l | tr -d ' ') "59" "sub --cutpoints-nt links"
 
 rm -rf "$TMPDIR"

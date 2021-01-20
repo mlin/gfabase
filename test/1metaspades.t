@@ -15,7 +15,11 @@ PATH="$(pwd)/target/release:${PATH}"
 gfabase version
 is "$?" "0" "gfabase version"
 
-export TMPDIR=$(mktemp -d --tmpdir gfabase_metaspades_test_XXXXXX)
+if [[ -z $TMPDIR ]]; then
+    TMPDIR=/tmp
+fi
+TMPDIR=$(mktemp -d "${TMPDIR}/gfabase_metaspades_test_XXXXXX")
+export TMPDIR=$(realpath "$TMPDIR")
 
 # extract metaspades GFA
 zstd -dc test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst > "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfa"
@@ -68,7 +72,7 @@ is "$?" "0" "sub --view scaffold NODE_2_length_747618_cov_15.708553_3"
 time gfabase sub --view "${TMPDIR}/atcc_staggered.assembly_graph_with_scaffolds.gfab" -o "${TMPDIR}/sub_by_path.gfa" --path \
     NODE_2_length_747618_cov_15.708553_3 NODE_2_length_747618_cov_15.708553_4
 is "$?" "0" "sub --view by path"
-is "$(cat "${TMPDIR}/sub_by_path.gfa" | wc -l)" "15" "sub --view by path line count"
+is "$(cat "${TMPDIR}/sub_by_path.gfa" | wc -l | tr -d ' ')" "15" "sub --view by path line count"
 
 # test behavior w/ empty input
 gfabase load /dev/null -o "${TMPDIR}/empty.gfab"
