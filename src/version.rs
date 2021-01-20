@@ -1,7 +1,7 @@
 use genomicsqlite::ConnectionMethods;
 use rusqlite::OpenFlags;
 
-pub const GFAB_VERSION_REQ: &str = ">= 0.3.0-0";
+pub const GFAB_VERSION_REQ: &str = ">= 0.4.0-0";
 
 #[allow(unused)]
 mod buildinfo {
