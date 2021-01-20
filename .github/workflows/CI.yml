@@ -62,11 +62,13 @@ jobs:
         docker run --rm -v $(pwd):/mnt centos:7 ldd -v -r /mnt/gfabase
         docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
     - name: digest
-      run: ./gfabase version && sha256sum gfabase
+      run: |
+        mv gfabase gfabase-linux-x86-64
+        ./gfabase-linux-x86-64 version && sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-linux-x86-64
-        path: gfabase
+        path: gfabase-linux-x86-64
 
   macOS-x86-64-exe:
     runs-on: macOS-10.15
@@ -98,13 +100,39 @@ jobs:
         echo "SQLITE3_INCLUDE_DIR=$(brew --prefix)/opt/sqlite/include" >> $GITHUB_ENV
         echo "SQLITE3_LIB_DIR=$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
     - name: build
-      run: ./cargo build --release && cp target/release/gfabase ./ && ./gfabase version
+      run: ./cargo build --release && cp target/release/gfabase ./gfabase-macOS-x86-64
     - name: test
       run: |
         prove -v test/{1,2}*.t
     - name: symbols & digests
-      run: otool -l gfabase && ./gfabase version && sha256sum gfabase
+      run: otool -L gfabase && (otool -l gfabase | grep RPATH) && ./gfabase-macOS-x86-64 version && sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-macOS-x86-64
-        path: gfabase
+        path: gfabase-macOS-x86-64
+
+  artifacts:
+    runs-on: ubuntu-20.04
+    needs: [linux-x86-64-exe, macOS-x86-64-exe]
+    steps:
+    - uses: actions/checkout@v2
+    - name: fetch linux exe
+      uses: actions/download-artifact@v2
+      with:
+        name: gfabase-linux-x86-64
+    - name: fetch macOS exe
+      uses: actions/download-artifact@v2
+      with:
+        name: gfabase-macOS-x86-64
+    - name: detect GIT_REVISION
+      run: |
+        echo "GIT_REVISION=$(git describe --tags --always)" >> $GITHUB_ENV
+    - uses: actions/upload-artifact@v2
+      with:
+        name: gfabase-${{ env.GIT_REVISION }}
+        path: |
+          gfabase-linux-x86-64
+          gfabase-macOS-x86-64
+    - name: digests
+      run: sha256sum gfabase-*
+ 
