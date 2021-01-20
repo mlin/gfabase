@@ -105,7 +105,11 @@ jobs:
       run: |
         prove -v test/{1,2}*.t
     - name: symbols & digests
-      run: otool -L gfabase-macOS-x86-64 && (otool -l gfabase-macOS-x86-64 | grep RPATH) && ./gfabase-macOS-x86-64 version && sha256sum gfabase-macOS-x86-64
+      run: |
+        otool -L gfabase-macOS-x86-64
+        otool -l gfabase-macOS-x86-64 | grep RPATH
+        ./gfabase-macOS-x86-64 version
+        sha256sum gfabase-macOS-x86-64
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-macOS-x86-64
