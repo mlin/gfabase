@@ -103,7 +103,7 @@ jobs:
       run: |
         prove -v test/{1,2}*.t
     - name: symbols & digests
-      run: ./gfabase version && otool -L gfabase && sha256sum gfabase
+      run: otool -l gfabase && ./gfabase version && sha256sum gfabase
     - uses: actions/upload-artifact@v2
       with:
         name: gfabase-macOS-x86-64
