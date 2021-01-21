@@ -73,5 +73,5 @@ Then find the executable `target/release/gfabase`.
 </sup>
 <br/>
 <sup>
-2. Our Linux executable releases are built with `RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"` to make them look for shared libraries alongside in the same directory first (useful when host SQLite can't be upgraded).
+2. Our Linux executable releases are built with <tt>RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"</tt> to make them look for shared libraries alongside in the same directory first (useful when host SQLite can't be upgraded).
 </sup>
