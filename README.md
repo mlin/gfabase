@@ -33,7 +33,7 @@ The following Jupyter notebooks explore human genome applications, also integrat
 1. **[Navigating a human *de novo* assembly](notebooks/gfabaseAssemblyNavigation.ipynb)**
 2. **[Querying a pangenome reference graph](notebooks/gfabasePangenomeGraph.ipynb)**
 
-<img width="871" alt="index" src="https://user-images.githubusercontent.com/356550/105319466-fd571080-5b68-11eb-9422-a0b3b01c7056.png">
+<img width="500" alt="index" src="https://user-images.githubusercontent.com/356550/105319466-fd571080-5b68-11eb-9422-a0b3b01c7056.png">
 
 ### Segment mappings
 
