@@ -423,9 +423,9 @@ impl<'a> SegmentRangeGuesser<'_> {
             .optional()?;
         if let Some((refseq_name, refseq_begin, refseq_end)) = maybe_row {
             return Ok(Some(format!(
-                "{}:{}-{}",
+                "~{}:{}-{}",
                 refseq_name,
-                refseq_begin.to_formatted_string(&Locale::en),
+                (refseq_begin + 1).to_formatted_string(&Locale::en),
                 refseq_end.to_formatted_string(&Locale::en)
             )));
         }
@@ -449,7 +449,7 @@ impl<'a> SegmentRangeGuesser<'_> {
                     "\"{}\",\"~{}:{}-{}\"\n",
                     name,
                     refseq_name,
-                    refseq_begin.to_formatted_string(&Locale::en),
+                    (refseq_begin + 1).to_formatted_string(&Locale::en),
                     refseq_end.to_formatted_string(&Locale::en)
                 ))?;
             }
