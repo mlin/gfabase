@@ -25,7 +25,7 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.asse
 # view GFA:
 ./gfabase view a_scaffold.gfab
 # or in one command:
-./gfabase sub atcc_staggered.metaspades.gfab - --view --path NODE_2_length_747618_cov_15.708553_3
+./gfabase sub atcc_staggered.metaspades.gfab --view --path NODE_2_length_747618_cov_15.708553_3
 ```
 
 The following Jupyter notebooks explore human genome applications, also integrating with [Bandage](https://rrwick.github.io/Bandage/) for visualization:
