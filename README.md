@@ -2,7 +2,7 @@
 
 `gfabase` is a command-line tool for indexed storage of [Graphical Fragment Assembly (GFA1)](https://github.com/GFA-spec/GFA-spec) data. It imports a .gfa file into a compressed **.gfab** file, from which it can later access subgraphs quickly (reading only the necessary parts), producing .gfa or .gfab. Beyond ID lookups, .gfab indexes the graph by mappings onto reference genome coordinates, facilitating navigation within *de novo* assemblies and pangenome reference graphs.
 
-Effectively, .gfab is a new GFA-superset format with built-in compression and indexing. It is in fact a SQLite (+ [Genomics Extension](https://github.com/mlin/GenomicSQLite)) database populated with a [GFA1-like schema](src/schema/GFA1.sql). Programmers have the option to access .gfab files directly using SQLite (+ Genomics Extension), without requiring `gfabase` nor even a low-level parser for .gfa/.gfab.
+Effectively, .gfab is a new GFA-superset format with built-in compression and indexing. It is in fact a SQLite (+ [Genomics Extension](https://github.com/mlin/GenomicSQLite)) database populated with a [GFA1-like schema](src/schema/GFA1.sql), which programmers have the option to access directly, without requiring `gfabase` nor even a low-level parser for .gfa/.gfab.
 
 ### Quick start
 
