@@ -28,10 +28,10 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.asse
 ./gfabase sub atcc_staggered.metaspades.gfab --view --path NODE_2_length_747618_cov_15.708553_3
 ```
 
-The following Jupyter notebooks explore human genome applications, also integrating with [Bandage](https://rrwick.github.io/Bandage/) for visualization:
+The following in-depth notebooks demonstrate human genome uses, also integrating with [Bandage](https://rrwick.github.io/Bandage/) for visualization:
 
 1. **[Navigating a human *de novo* assembly](notebooks/gfabaseAssemblyNavigation.ipynb)**
-2. **[Querying a pangenome reference graph](notebooks/gfabasePangenomeGraph.ipynb)**
+2. **[Slicing a pangenome reference graph](notebooks/gfabasePangenomeGraph.ipynb)**
 
 <img width="500" alt="index" src="https://user-images.githubusercontent.com/356550/105319466-fd571080-5b68-11eb-9422-a0b3b01c7056.png">
 
@@ -63,7 +63,6 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 ```bash
 git clone https://github.com/mlin/gfabase.git
 cd gfabase
-export RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"
 ./cargo build --release
 ```
 
@@ -74,5 +73,5 @@ Then find the executable `target/release/gfabase`.
 </sup>
 <br/>
 <sup>
-2. The RUSTFLAGS setting makes it look for shared libraries alongside in the same directory before the usual system paths (useful for bundling SQLite when needed).
+2. Our Linux executable releases are built with `RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"` to make them look for shared libraries alongside in the same directory first (useful when host SQLite can't be upgraded).
 </sup>
