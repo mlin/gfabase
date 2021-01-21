@@ -13,7 +13,7 @@ Each [Release](https://github.com/mlin/gfabase/releases) includes prebuilt `gfab
 * `gfabase sub my.gfab SEGMENT/PATH/RANGE... [--view]`: query for a subgraph, producing either .gfa or .gfab
 * `gfabase add-mappings my.gfab mappings.paf`: add index of reference genome mappings for GFA segments
 
-The following quick example accesses a scaffold by its Path name in a metaSPAdes assembly of simulated metagenomic reads (from [Ye <em>et al.</em> (2019)](https://dx.doi.org/10.1016/j.cell.2019.07.010); it also uses [`zstd`](https://github.com/facebook/zstd) for decompression.
+The following quick example accesses a scaffold by its Path name in a metaSPAdes assembly of simulated metagenomic reads from [Ye <em>et al.</em> (2019)](https://dx.doi.org/10.1016/j.cell.2019.07.010); it also uses [`zstd`](https://github.com/facebook/zstd) for decompression.
 
 ```bash
 curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.assembly_graph_with_scaffolds.gfa.zst?raw=true" \
