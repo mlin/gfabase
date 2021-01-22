@@ -30,8 +30,8 @@ curl -L "https://github.com/mlin/gfabase/blob/main/test/data/atcc_staggered.asse
 
 The following in-depth notebooks demonstrate human genome uses, also integrating with [Bandage](https://rrwick.github.io/Bandage/) for visualization:
 
-1. **[Navigating a human *de novo* assembly](notebooks/gfabaseAssemblyNavigation.ipynb)**
-2. **[Slicing a pangenome reference graph](notebooks/gfabasePangenomeGraph.ipynb)**
+1. **[Navigating a human *de novo* assembly](https://nbviewer.jupyter.org/github/mlin/gfabase/blob/main/notebooks/gfabaseAssemblyNavigation.ipynb)**
+2. **[Slicing a pangenome reference graph](https://nbviewer.jupyter.org/github/mlin/gfabase/blob/main/notebooks/gfabasePangenomeGraph.ipynb)**
 
 <img width="500" alt="index" src="https://user-images.githubusercontent.com/356550/105319466-fd571080-5b68-11eb-9422-a0b3b01c7056.png">
 
