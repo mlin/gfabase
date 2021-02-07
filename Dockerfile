@@ -19,14 +19,8 @@ ENV PATH=${PATH}:/root/.cargo/bin
 RUN mkdir -p /work/gfabase
 ADD . /work/gfabase
 
-# install prebuilt libsqlite3.so.0 from GenomicSQLite releases
-WORKDIR /work
-RUN wget -nv "https://github.com/mlin/GenomicSQLite/releases/download/v$(cat gfabase/Cargo.toml.in | grep genomicsqlite | sed s/genomicsqlite// | tr -d ' ="')/libsqlite3.so.0.zip"
-RUN unzip libsqlite3.so.0.zip && mv libsqlite3.so.0 /usr/local/lib/
-RUN ln -s libsqlite3.so.0 /usr/local/lib/libsqlite3.so
-ENV LD_LIBRARY_PATH=/usr/local/lib
-
 # cargo build
+WORKDIR /work
 RUN gfabase/cargo clean && gfabase/cargo build --release
 
 # Zstandard (only needed for tests)
