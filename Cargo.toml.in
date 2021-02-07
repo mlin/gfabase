@@ -9,7 +9,7 @@ build = "build.rs"
 built = { version = "^0.4", features = ["chrono"] }
 
 [dependencies]
-genomicsqlite = "0.7.0"
+genomicsqlite = "0.8.0-pre.0"
 clap = "3.0.0-beta.2"
 json = "^0"
 chrono = "^0"
@@ -26,3 +26,4 @@ atty = "^0.2"
 
 [dependencies.rusqlite]
 version = "0.24.2"
+features = ["bundled"]
