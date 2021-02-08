@@ -142,7 +142,10 @@ pub fn check_gfab_version(gfab_version: &semver::Version) -> Result<()> {
 
 pub fn check_gfab_filename_schema(filename: &str) -> Result<semver::Version> {
     // not "safe", but usually gives more-helpful error message:
-    if !Path::new(filename).is_file() {
+    if !filename.starts_with("http:")
+        && !filename.starts_with("https:")
+        && !Path::new(filename).is_file()
+    {
         return Err(Error::IoError(io::Error::new(
             io::ErrorKind::NotFound,
             "File not found",
