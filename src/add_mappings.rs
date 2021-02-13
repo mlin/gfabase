@@ -34,6 +34,14 @@ pub struct Opts {
     /// Ignore (instead of error on) mappings whose query doesn't match a segment in the .gfab
     #[clap(long)]
     pub ignore_unknown: bool,
+
+    /// log extra progress reports
+    #[clap(short, long)]
+    pub verbose: bool,
+
+    /// log errors only
+    #[clap(short, long)]
+    pub quiet: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {

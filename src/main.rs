@@ -47,7 +47,26 @@ enum SubCommand {
 }
 
 fn main() -> Result<()> {
-    let opts = Opts::parse();
+    let mut opts = Opts::parse();
+    if match &opts.subcmd {
+        SubCommand::Version => false,
+        SubCommand::Load(subopts) => subopts.verbose,
+        SubCommand::AddMappings(subopts) => subopts.verbose,
+        SubCommand::View(subopts) => subopts.verbose,
+        SubCommand::Sub(subopts) => subopts.verbose,
+    } {
+        opts.verbose = true;
+    }
+    if match &opts.subcmd {
+        SubCommand::Version => false,
+        SubCommand::Load(subopts) => subopts.quiet,
+        SubCommand::AddMappings(subopts) => subopts.quiet,
+        SubCommand::View(subopts) => subopts.quiet,
+        SubCommand::Sub(subopts) => subopts.quiet,
+    } {
+        opts.quiet = true;
+    }
+
     let t0 = std::time::Instant::now();
     let colors = ColoredLevelConfig::new()
         .info(Color::Blue)
@@ -74,12 +93,12 @@ fn main() -> Result<()> {
         .chain(std::io::stderr())
         .apply()?;
 
-    let rslt = match opts.subcmd {
+    let rslt = match &opts.subcmd {
         SubCommand::Version => version::main(),
-        SubCommand::Load(subopts) => load::main(&subopts),
-        SubCommand::AddMappings(subopts) => add_mappings::main(&subopts),
-        SubCommand::View(subopts) => view::main(&subopts),
-        SubCommand::Sub(subopts) => sub::main(&subopts),
+        SubCommand::Load(subopts) => load::main(subopts),
+        SubCommand::AddMappings(subopts) => add_mappings::main(subopts),
+        SubCommand::View(subopts) => view::main(subopts),
+        SubCommand::Sub(subopts) => sub::main(subopts),
     };
 
     if let Err(util::Error::EmptyGfab) = rslt {

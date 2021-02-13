@@ -41,6 +41,14 @@ pub struct Opts {
     /// Compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
+
+    /// log extra progress reports
+    #[clap(short, long)]
+    pub verbose: bool,
+
+    /// log errors only
+    #[clap(short, long)]
+    pub quiet: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {

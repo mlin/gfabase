@@ -26,6 +26,14 @@ pub struct Opts {
     /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings
     #[clap(long)]
     pub guess_ranges: bool,
+
+    /// log extra progress reports
+    #[clap(short, long)]
+    pub verbose: bool,
+
+    /// log errors only
+    #[clap(short, long)]
+    pub quiet: bool,
 }
 
 pub fn main(opts: &Opts) -> Result<()> {

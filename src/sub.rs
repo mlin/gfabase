@@ -69,6 +69,14 @@ pub struct Opts {
     /// compression level (-5 to 22) for output .gfab
     #[clap(long, default_value = "6")]
     pub compress: i8,
+
+    /// log extra progress reports
+    #[clap(short, long)]
+    pub verbose: bool,
+
+    /// log errors only
+    #[clap(short, long)]
+    pub quiet: bool,
 }
 // TODO: add help headings e.g. #[clap(long, help_heading = Some("SEGMENT"))]
 // pending release of fix for https://github.com/clap-rs/clap/issues/2279
