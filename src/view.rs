@@ -109,8 +109,11 @@ pub fn writer(gfa_filename: &str) -> Result<Box<dyn io::Write>> {
 /// Tolerate BrokenPipe errors (user exited before viewing all data)
 pub fn less<F>(write: F) -> Result<()>
 where
-    F: FnOnce(&mut process::ChildStdin) -> Result<()>,
+    F: FnOnce(&mut dyn io::Write) -> Result<()>,
 {
+    if which::which("less").is_err() {
+        return write(&mut io::stdout());
+    }
     let mut child = process::Command::new("less")
         .arg("-S")
         .stdin(process::Stdio::piped())
