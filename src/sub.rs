@@ -77,7 +77,6 @@ pub fn main(opts: &Opts) -> Result<()> {
     if opts.segments.len() == 0 {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
-    util::check_gfab_filename_schema(&opts.gfab)?;
     if opts.view || opts.bandage || opts.guess_ranges || opts.outfile == "-" {
         sub_gfa(opts)
     } else {
@@ -93,6 +92,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     if opts.view && opts.outfile != "-" && !opts.outfile.ends_with(".gfa") {
         warn!("output filename should end in .gfa");
     }
+    util::url_or_extant_file(&opts.gfab)?;
 
     // create output database
     let mut db = load::new_db(&opts.outfile, opts.compress, 1024)?;
@@ -103,7 +103,6 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     let attach_sql = db.genomicsqlite_attach_sql(&opts.gfab, "input", &dbopts_in)?;
     db.execute_batch(&attach_sql)?;
     let gfab_version = util::check_gfab_schema(&db, "input.")?;
-    debug!("gfabase v{} created {}", gfab_version, opts.gfab);
     util::check_gfab_version(&gfab_version)?;
 
     let sub_segment_count: i64;
