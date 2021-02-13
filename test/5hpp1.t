@@ -8,7 +8,7 @@ export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 export LC_ALL=C
 
-plan tests 13
+plan tests 14
 
 aria2c -c -d /tmp -s 16 -x 16 --retry-wait 2 ftp://ftp.dfci.harvard.edu/pub/hli/minigraph/HPP/GRCh38-freeze1.gfa.gz
 is "$?" "0" "download gfa"
@@ -30,6 +30,7 @@ gsql() {
 }
 export -f gsql
 
+is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'pragma application_id')"  "1734762850" "gfab application_id"
 is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select count(1) from gfa1_segment_meta')"  "236294" "gfab segment count"
 is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select count(1) from gfa1_link')" "348614" "gfab link count"
 is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select sum(sequence_length) from gfa1_segment_meta')" "3216020942" "gfab base metacount"

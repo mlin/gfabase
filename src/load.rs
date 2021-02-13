@@ -145,7 +145,8 @@ pub fn new_db(
             | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
     )?;
-    db.execute_batch("PRAGMA foreign_keys = OFF")?;
+    // "gfab" = 0x67666162
+    db.execute_batch("PRAGMA foreign_keys = OFF; PRAGMA application_id = 0x67666162")?;
     Ok(db)
 }
 
