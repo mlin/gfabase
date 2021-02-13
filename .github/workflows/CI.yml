@@ -38,7 +38,7 @@ jobs:
       run: |
         sudo apt-get install -y aria2 tabix zstd nginx
         sudo pip3 install genomicsqlite miniwdl
-        prove -v test/*.t
+        prove -v -j 2 test/*.t
 
   linux-x86-64-exe:
     runs-on: ubuntu-20.04
