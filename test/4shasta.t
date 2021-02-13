@@ -55,7 +55,7 @@ is $($gfabase sub "${TMPDIR}/Assembly.gfab" --range --cutpoints 2 chr12:11176693
    "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments"
 
 # web
-genomicsqlite "${TMPDIR}/Assembly.gfab" --compact
+time genomicsqlite "${TMPDIR}/Assembly.gfab" --compact
 is "$?" "0" "compaction"
 cat << EOF > "${TMPDIR}/nginx.config"
 pid                  ${TMPDIR}/nginx.pid;
@@ -70,8 +70,9 @@ http {
     sendfile_max_chunk        1m;
 
     server {
-        root                 /tmp;
+        root                 ${TMPDIR};
         listen               9999;
+
         location / {
         }
     }
@@ -80,7 +81,7 @@ EOF
 cat "${TMPDIR}/nginx.config"
 nginx -c "${TMPDIR}/nginx.config"
 export SQLITE_WEB_LOG=4
-is $($gfabase sub http://localhost:9999/shasta-HG002-Guppy-3.6.0-run4-UL.gfab.compact \
+is $($gfabase sub http://localhost:9999/Assembly.gfab.compact \
         --range --cutpoints 2 chr12:111766933-111817532 \
         | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments via web"
