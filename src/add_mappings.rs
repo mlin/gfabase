@@ -37,7 +37,6 @@ pub struct Opts {
 }
 
 pub fn main(opts: &Opts) -> Result<()> {
-    util::check_gfab_filename_schema(&opts.gfab)?;
     if opts.mappings == "-" && atty::is(atty::Stream::Stdin) {
         bad_command!("pipe in .paf data or supply uncompressed filename")
     }
@@ -47,14 +46,11 @@ pub fn main(opts: &Opts) -> Result<()> {
     dbopts.insert("unsafe_load", json::JsonValue::from(true));
 
     // open db
-    let mut db = genomicsqlite::open(
+    let (_gfab_version, mut db) = util::open_gfab(
         &opts.gfab,
         OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
         &dbopts,
     )?;
-    let gfab_version = util::check_gfab_schema(&db, "")?;
-    debug!("gfabase v{} created {}", gfab_version, opts.gfab);
-    util::check_gfab_version(&gfab_version)?;
 
     {
         // open transaction & apply schema

@@ -8,7 +8,7 @@ export BASH_TAP_ROOT=test/bash-tap
 source test/bash-tap/bash-tap-bootstrap
 export LC_ALL=C
 
-plan tests 13
+plan tests 15
 
 aria2c -c -d /tmp -o shasta-HG002-Guppy-3.6.0-run4-UL.gfa -s 16 -x 16 --retry-wait 2 \
     https://s3-us-west-2.amazonaws.com/czi.paolo-public/HG002-Guppy-3.6.0-run4-UL/Assembly.gfa
@@ -50,7 +50,42 @@ time $gfabase add-mappings "${TMPDIR}/Assembly.gfab" /tmp/shasta-HG002-Guppy-3.6
 is "$?" "0" "replace mappings"
 is "$(gsql 'select count(1) from gfa1_segment_mapping')" "10238" "mapQ60 count"
 
-is $($gfabase sub "${TMPDIR}/Assembly.gfab" --range --cutpoints 2 chr12:111766933-111817532 | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
+is $($gfabase sub "${TMPDIR}/Assembly.gfab" --range --cutpoints 2 chr12:111766933-111817532 \
+        | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments"
+
+# web
+time genomicsqlite "${TMPDIR}/Assembly.gfab" --compact
+is "$?" "0" "compaction"
+cat << EOF > "${TMPDIR}/nginx.config"
+pid                  ${TMPDIR}/nginx.pid;
+worker_processes     4;
+error_log            /dev/stderr warn;
+events {
+}
+http {
+    access_log                /dev/stderr;
+    proxy_max_temp_file_size  0;
+    sendfile                  on;
+    sendfile_max_chunk        1m;
+
+    server {
+        root                 ${TMPDIR};
+        listen               9999;
+
+        location / {
+        }
+    }
+}
+EOF
+cat "${TMPDIR}/nginx.config"
+nginx -c "${TMPDIR}/nginx.config"
+export SQLITE_WEB_LOG=4
+is $($gfabase sub http://localhost:9999/Assembly.gfab.compact \
+        --range --cutpoints 2 chr12:111766933-111817532 \
+        | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
+   "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments via web"
+nginx_pid=$(cat "${TMPDIR}/nginx.pid")
+kill -QUIT $nginx_pid
 
 rm -rf "$TMPDIR"

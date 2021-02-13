@@ -140,20 +140,30 @@ pub fn check_gfab_version(gfab_version: &semver::Version) -> Result<()> {
     })
 }
 
-pub fn check_gfab_filename_schema(filename: &str) -> Result<semver::Version> {
+pub fn url_or_extant_file(it: &str) -> Result<()> {
     // not "safe", but usually gives more-helpful error message:
-    if !Path::new(filename).is_file() {
+    if !it.starts_with("http:") && !it.starts_with("https:") && !Path::new(it).is_file() {
         return Err(Error::IoError(io::Error::new(
             io::ErrorKind::NotFound,
             "File not found",
         )));
     }
-    match genomicsqlite::open(
-        filename,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-        &json::object::Object::new(),
-    ) {
-        Ok(db) => check_gfab_schema(&db, ""),
+    Ok(())
+}
+
+pub fn open_gfab(
+    filename: &str,
+    flags: rusqlite::OpenFlags,
+    genomicsqlite_config: &json::object::Object,
+) -> Result<(semver::Version, rusqlite::Connection)> {
+    url_or_extant_file(filename)?;
+    match genomicsqlite::open(filename, flags, genomicsqlite_config) {
+        Ok(db) => {
+            let gfab_version = check_gfab_schema(&db, "")?;
+            debug!("gfabase v{} created {}", gfab_version, filename);
+            check_gfab_version(&gfab_version)?;
+            Ok((gfab_version, db))
+        }
         Err(err) => {
             debug!("check_gfab_filename_schema: {}", err);
             Err(Error::NotGfab)

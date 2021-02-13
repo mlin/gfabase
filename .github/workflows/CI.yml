@@ -36,7 +36,7 @@ jobs:
       run: ./cargo build --release && target/release/gfabase version
     - name: test
       run: |
-        sudo apt-get install -y aria2 tabix zstd
+        sudo apt-get install -y aria2 tabix zstd nginx
         sudo pip3 install genomicsqlite miniwdl
         prove -v test/*.t
 
@@ -53,8 +53,8 @@ jobs:
       run: docker run --rm gfabase
     - name: run-up in clean centos:7
       run: |
-        docker run gfabase sha256sum target/release/gfabase /usr/local/lib/libsqlite3.so.0
-        docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /usr/local/lib/libsqlite3.so.0 /mnt
+        docker run gfabase sha256sum target/release/gfabase
+        docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /mnt
         echo -n "required glibc: "
         objdump -t gfabase | grep -o 'GLIBC_.*' | sort -Vr | head -n1
         echo -n "RPATH: "
@@ -79,7 +79,7 @@ jobs:
         submodules: recursive
     - name: dependencies
       run: |
-        BREW_DEPS="python@3.9 sqlite zstd aria2 coreutils"
+        BREW_DEPS="python@3.9 sqlite zstd aria2 coreutils nginx"
         rm -f /usr/local/bin/2to3  # https://github.com/pypa/pipenv/issues/3831
         brew update || (sleep 2; brew update)
         for dep in $BREW_DEPS ; do
@@ -92,13 +92,8 @@ jobs:
         default: true
     - name: build environment
       run: |
-        echo "PREFIX=$(brew --prefix)" >> $GITHUB_ENV
         echo "PATH=${PREFIX}/opt/python/libexec/bin:${PREFIX}/opt/sqlite/bin:${PATH}" >> $GITHUB_ENV
-        echo "LDFLAGS=-L$(brew --prefix)/lib -L$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
         echo 'RUSTFLAGS=-C target-cpu=ivybridge -C link-args=-Wl,-rpath,@executable_path/.' >> $GITHUB_ENV
-        # used by rusqlite:
-        echo "SQLITE3_INCLUDE_DIR=$(brew --prefix)/opt/sqlite/include" >> $GITHUB_ENV
-        echo "SQLITE3_LIB_DIR=$(brew --prefix)/opt/sqlite/lib" >> $GITHUB_ENV
     - name: build
       run: ./cargo build --release && cp target/release/gfabase ./gfabase-macOS-x86-64
     - name: test
