@@ -1,8 +1,8 @@
 // Connectivity analysis: after a first pass through segments and links (by either `load` or `sub`)
 // traverse the DFS forest to discover (undirected) connected components and simultaneously
 // determine which segments are "cutpoints" whose individual deletion would increase the number of
-// connected components. Write these into a temp table that the loader then joins into the main
-// database.
+// connected components. Write these into temp.segment_connectivity_hold, which the loader later
+// joins into the metadata table.
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 use std::cmp;
@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 use crate::util::Result;
 
-pub fn index(db: &rusqlite::Connection, segment_id_table: &str) -> Result<()> {
+pub fn analyze(db: &rusqlite::Connection, segment_id_table: &str) -> Result<()> {
     db.execute_batch(
         "CREATE INDEX IF NOT EXISTS gfa1_link_from_to ON gfa1_link(from_segment,to_segment);
          CREATE INDEX IF NOT EXISTS gfa1_link_to_from ON gfa1_link(to_segment,from_segment)",

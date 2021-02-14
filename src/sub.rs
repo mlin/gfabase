@@ -136,7 +136,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
             }
             txn.execute_batch(include_str!("query/sub.sql"))?;
 
-            // reanalyze connectivity
+            // reanalyze connectivity (+ index links)
             txn.execute_batch(
                 "CREATE TABLE temp.segment_connectivity_hold(
                     segment_id INTEGER PRIMARY KEY,
@@ -144,7 +144,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
                     is_cutpoint INTEGER NOT NULL)",
             )?;
             if reanalyze {
-                connectivity::index(&txn, "temp.sub_segments")?
+                connectivity::analyze(&txn, "temp.sub_segments")?
             } else {
                 txn.execute_batch(
                     "INSERT INTO temp.segment_connectivity_hold(segment_id,connected_component,is_cutpoint)

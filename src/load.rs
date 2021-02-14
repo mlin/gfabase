@@ -94,8 +94,9 @@ pub fn main(opts: &Opts) -> Result<()> {
             info!("processed {} GFA1 record(s)", records_processed);
 
             // analyze graph connectivity (filling temp.segment_connectivity_hold)
+            // also creates gfa1_link indexes
             debug!("analyzing graph connectivity ...");
-            connectivity::index(&txn, "temp.segment_meta_hold")?;
+            connectivity::analyze(&txn, "temp.segment_meta_hold")?;
 
             // copy metadata as planned
             debug!("writing segment metadata...");
@@ -110,7 +111,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             debug!("insertions complete");
         }
 
-        // indexing
+        // add the remaining indexes
         create_indexes(&txn)?;
 
         // done
