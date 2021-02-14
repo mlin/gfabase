@@ -26,10 +26,6 @@ pub struct Opts {
     #[clap(long)]
     pub always_names: bool,
 
-    /// Omit index of graph connectivity (saves loading time & memory / disables certain queries)
-    #[clap(long)]
-    pub no_connectivity: bool,
-
     /// Omit segment sequences
     #[clap(long)]
     pub no_sequences: bool,
@@ -75,13 +71,18 @@ pub fn main(opts: &Opts) -> Result<()> {
             "CREATE TABLE temp.segment_meta_hold(
                 segment_id INTEGER PRIMARY KEY, name TEXT,
                 sequence_length INTEGER, tags_json TEXT
-            );
-            CREATE TABLE temp.segment_mapping_hold(
+             );
+             CREATE TABLE temp.segment_connectivity_hold(
+                segment_id INTEGER PRIMARY KEY,
+                connected_component INTEGER NOT NULL,
+                is_cutpoint INTEGER NOT NULL
+             );
+             CREATE TABLE temp.segment_mapping_hold(
                 segment_id INTEGER NOT NULL,
                 refseq_name TEXT NOT NULL,
                 refseq_begin INTEGER NOT NULL,
                 refseq_end INTEGER NOT NULL
-            );",
+             );",
         )?;
 
         // intake GFA records
@@ -91,21 +92,27 @@ pub fn main(opts: &Opts) -> Result<()> {
             warn!("no input records processed")
         } else {
             info!("processed {} GFA1 record(s)", records_processed);
-            debug!("writing segment metadata...");
+
+            // analyze graph connectivity (filling temp.segment_connectivity_hold)
+            // also creates gfa1_link indexes
+            debug!("analyzing graph connectivity ...");
+            connectivity::analyze(&txn, "temp.segment_meta_hold")?;
+
             // copy metadata as planned
+            debug!("writing segment metadata...");
             txn.execute_batch(
-                "INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
-                    SELECT segment_id, name, sequence_length, tags_json
-                    FROM temp.segment_meta_hold;
-                INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
+                "INSERT INTO gfa1_segment_meta(segment_id, name, connected_component, is_cutpoint, sequence_length, tags_json)
+                    SELECT segment_id, name, connected_component, is_cutpoint, sequence_length, tags_json
+                    FROM temp.segment_meta_hold LEFT JOIN temp.segment_connectivity_hold USING (segment_id);
+                 INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
                     SELECT segment_id, refseq_name, refseq_begin, refseq_end
                     FROM temp.segment_mapping_hold ORDER BY segment_id",
             )?;
             debug!("insertions complete");
         }
 
-        // indexing
-        create_indexes(&txn, !opts.no_connectivity)?;
+        // add the remaining indexes
+        create_indexes(&txn)?;
 
         // done
         debug!("flushing {} ...", &opts.output_gfab);
@@ -164,7 +171,7 @@ pub fn create_tables(db: &rusqlite::Connection) -> Result<()> {
     Ok(())
 }
 
-pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<()> {
+pub fn create_indexes(db: &rusqlite::Connection) -> Result<()> {
     info!("indexing...");
 
     let ddl = include_str!("schema/GFA1.index.sql");
@@ -185,11 +192,6 @@ pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<(
     )?;
     debug!("\tindexing segment mappings by genomic range ...");
     db.execute_batch(&gri_sql)?;
-
-    if connectivity {
-        debug!("\tindexing graph connectivity ...");
-        connectivity::index(db)?;
-    }
 
     debug!("\tANALYZE ...");
     db.execute_batch("PRAGMA analysis_limit = 1000; ANALYZE main")?;
@@ -642,42 +644,48 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
     {
         return Err(e);
     }
-    if connectivity::has_index(db, "")? {
-        debug!("undirected graph connectivity:");
-        db.query_row(
-            "SELECT count(component_id), max(size), sum(size), sum(cuts), sum(bp), sum(cuts_bp) FROM
-                (SELECT
-                        component_id, count(segment_id) AS size,
-                        sum(is_cutpoint) AS cuts,
-                        sum(sequence_length) AS bp,
-                        sum(is_cutpoint*sequence_length) AS cuts_bp
-                 FROM gfa1_connectivity INNER JOIN gfa1_segment_meta USING(segment_id)
-                 GROUP BY component_id)",
-            NO_PARAMS,
-            |row| {
-                let count: i64 = row.get(0)?;
-                if count > 0 {
-                    let maxsize: i64 = row.get(1)?;
-                    let sumsize: i64 = row.get(2)?;
-                    let cuts: i64 = row.get(3)?;
-                    let bp: i64 = row.get(4)?;
-                    let cuts_bp: i64 = row.get(5)?;
-                    debug!("\t{} connected components (of at least 2 segments)", count.to_formatted_string(&Locale::en));
-                    debug!(
-                        "\t{} segments in these components, totaling {} bp",
-                        sumsize.to_formatted_string(&Locale::en), bp.to_formatted_string(&Locale::en)
-                    );
-                    debug!(
-                        "\t{} cutpoint segments, totaling {} bp",
-                        cuts.to_formatted_string(&Locale::en), cuts_bp.to_formatted_string(&Locale::en)
-                    );
-                    debug!("\t{} segments in largest component", maxsize.to_formatted_string(&Locale::en))
-                } else {
-                    warn!("graph has no links")
-                }
-                Ok(())
-            },
-        )?;
-    }
+    debug!("undirected graph connectivity:");
+    db.query_row(
+        "SELECT count(connected_component), max(size), sum(size), sum(cuts), sum(bp), sum(cuts_bp) FROM
+            (SELECT
+                connected_component, count(segment_id) AS size,
+                sum(is_cutpoint) AS cuts,
+                sum(sequence_length) AS bp,
+                sum(is_cutpoint*sequence_length) AS cuts_bp
+             FROM gfa1_segment_meta
+             GROUP BY connected_component)",
+        NO_PARAMS,
+        |row| {
+            let count: i64 = row.get(0)?;
+            if count > 0 {
+                let maxsize: i64 = row.get(1)?;
+                let sumsize: i64 = row.get(2)?;
+                let cuts: i64 = row.get(3)?;
+                let bp: i64 = row.get(4)?;
+                let cuts_bp: i64 = row.get(5)?;
+                debug!(
+                    "\t{} connected components (of at least 2 segments)",
+                    count.to_formatted_string(&Locale::en)
+                );
+                debug!(
+                    "\t{} segments in these components, totaling {} bp",
+                    sumsize.to_formatted_string(&Locale::en),
+                    bp.to_formatted_string(&Locale::en)
+                );
+                debug!(
+                    "\t{} cutpoint segments, totaling {} bp",
+                    cuts.to_formatted_string(&Locale::en),
+                    cuts_bp.to_formatted_string(&Locale::en)
+                );
+                debug!(
+                    "\t{} segments in largest component",
+                    maxsize.to_formatted_string(&Locale::en)
+                )
+            } else {
+                warn!("graph has no links")
+            }
+            Ok(())
+        },
+    )?;
     Ok(())
 }

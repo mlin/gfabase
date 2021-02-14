@@ -1,8 +1,10 @@
 -- Segment metadata
 CREATE TABLE gfa1_segment_meta(
     segment_id INTEGER NOT NULL PRIMARY KEY,
-    name TEXT COLLATE UINT,   -- if distinct from ID, otherwise NULL
-    sequence_length INTEGER,  -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
+    name TEXT COLLATE UINT,                -- if distinct from ID, otherwise NULL
+    connected_component INTEGER NOT NULL,  -- smallest segment_id undirectedly connected to this one (including self)
+    is_cutpoint INTEGER NOT NULL,          -- {0,1}, 1 iff segment is a cutpoint of its connected component
+    sequence_length INTEGER,               -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
     tags_json TEXT
 );
 

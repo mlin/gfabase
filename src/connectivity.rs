@@ -1,10 +1,8 @@
-// Connectivity index: at the end of the load process, traverse the DFS forest to discover
-// connected components (treating the segment graph as undirected) and store a relation table with
-// components (of >=2 segments) and the segments therein. Additionally, the table annotates which
-// segments are "cutpoints" whose individual deletion would increase the number of connected
-// components (again, undirected). The connected components and their cutpoints are all found in
-// one DFS forest traversal.
-
+// Connectivity analysis: after a first pass through segments and links (by either `load` or `sub`)
+// traverse the DFS forest to discover (undirected) connected components and simultaneously
+// determine which segments are "cutpoints" whose individual deletion would increase the number of
+// connected components. Write these into temp.segment_connectivity_hold, which the loader later
+// joins into the metadata table.
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 use std::cmp;
@@ -12,9 +10,11 @@ use std::collections::BTreeMap;
 
 use crate::util::Result;
 
-pub fn index(db: &rusqlite::Connection) -> Result<()> {
-    db.execute_batch(include_str!("schema/GFA1.connectivity.sql"))?;
-
+pub fn analyze(db: &rusqlite::Connection, segment_id_table: &str) -> Result<()> {
+    db.execute_batch(
+        "CREATE INDEX IF NOT EXISTS gfa1_link_from_to ON gfa1_link(from_segment,to_segment);
+         CREATE INDEX IF NOT EXISTS gfa1_link_to_from ON gfa1_link(to_segment,from_segment)",
+    )?;
     let mut neighbors = db.prepare(
         // remove directionality from links
         "  SELECT from_segment FROM gfa1_link WHERE to_segment = ?1 AND from_segment != ?1
@@ -22,51 +22,43 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
            SELECT to_segment FROM gfa1_link WHERE from_segment = ?1 AND to_segment != ?1",
     )?;
     let mut insert = db.prepare(
-        "INSERT INTO gfa1_connectivity(segment_id,component_id,is_cutpoint) VALUES(?,?,?)",
+        "INSERT INTO temp.segment_connectivity_hold(segment_id,connected_component,is_cutpoint) VALUES(?,?,?)",
     )?;
 
-    let mut visited_query = db.prepare("SELECT 1 from gfa1_connectivity WHERE segment_id = ?")?;
+    let mut visited_query =
+        db.prepare("SELECT 1 from temp.segment_connectivity_hold WHERE segment_id = ?")?;
     // use a bloom filter in front of visited_query
     let approx_segment_count: i64 = db.query_row(
-        "SELECT coalesce(max(segment_id),100000) FROM gfa1_segment_meta",
+        &format!(
+            "SELECT coalesce(max(segment_id),100000) FROM {}",
+            segment_id_table
+        ),
         NO_PARAMS,
         |row| row.get(0),
     )?;
     let mut visited_bloom = Bloom::new_for_fp_rate(approx_segment_count as usize, 0.05);
 
     // traverse DFS forest to discover connected components
-    let mut component_id: i64 = 1;
-    let mut all_segments = db.prepare("SELECT segment_id FROM gfa1_segment_meta")?;
+    let mut all_segments = db.prepare(&format!("SELECT segment_id FROM {}", segment_id_table))?;
     let mut all_segments_cursor = all_segments.query(NO_PARAMS)?;
     while let Some(segrow) = all_segments_cursor.next()? {
         let segment_id: i64 = segrow.get(0)?;
-        let visited = visited_bloom.check(&segment_id)
+        if !(visited_bloom.check(&segment_id)
             && visited_query
                 .query_row(params!(segment_id), |_| Ok(()))
                 .optional()?
-                .is_some();
-        if !visited
-            && component_dfs(
-                component_id,
-                segment_id,
-                &mut neighbors,
-                &mut insert,
-                &mut visited_bloom,
-            )?
+                .is_some())
         {
-            component_id += 1;
+            component_dfs(segment_id, &mut neighbors, &mut insert, &mut visited_bloom)?
         }
     }
 
-    db.execute_batch(
-        "CREATE INDEX gfa1_connectivity_component ON gfa1_connectivity(component_id)",
-    )?;
     Ok(())
 }
 
-// DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
-// component, also marking is_cutpoint therein. https://cp-algorithms.com/graph/cutpoints.html
-// Return true iff the connected component contains at least two segments.
+// DFS traversal from given start segment; populate temp.segment_connectivity_hold with the
+// discovered connected component, also marking cutpoints therein.
+//      https://cp-algorithms.com/graph/cutpoints.html
 
 // cutpoint algo state for each discovered segment
 struct DfsSegmentState {
@@ -84,12 +76,11 @@ enum DfsStackFrame {
     Return { segment: i64, child: i64 },
 }
 fn component_dfs(
-    component_id: i64,
     start_segment_id: i64,
     neighbors: &mut rusqlite::Statement,
     insert: &mut rusqlite::Statement,
     visited_bloom: &mut Bloom<i64>,
-) -> Result<bool> {
+) -> Result<()> {
     let mut timestamp: u64 = 0;
     let mut state: BTreeMap<i64, DfsSegmentState> = BTreeMap::new();
     let mut start_degree: u64 = 0;
@@ -157,11 +148,13 @@ fn component_dfs(
         }
     }
 
-    // dump results into gfa1_connectivity
-    if timestamp < 2 {
-        return Ok(false);
-    }
+    // dump results into temp.segment_connectivity_hold
+    let mut component_id: Option<i64> = None;
     for (segment_id, segment_state) in state.iter() {
+        if component_id.is_none() {
+            // set connected_component to the lowest connected segment_id
+            component_id = Some(*segment_id)
+        }
         let is_cutpoint = if *segment_id != start_segment_id {
             segment_state.is_cutpoint
         } else {
@@ -169,24 +162,12 @@ fn component_dfs(
         };
         insert.execute(params!(
             segment_id,
-            component_id,
+            component_id.unwrap(),
             if is_cutpoint { 1 } else { 0 },
         ))?;
-        visited_bloom.set(segment_id);
+        if timestamp > 1 {
+            visited_bloom.set(segment_id)
+        }
     }
-    Ok(true)
-}
-
-pub fn has_index(db: &rusqlite::Connection, schema: &str) -> Result<bool> {
-    Ok(db
-        .query_row(
-            &format!(
-                "SELECT 1 FROM {}sqlite_master WHERE type='table' AND name='gfa1_connectivity'",
-                schema
-            ),
-            NO_PARAMS,
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some())
+    Ok(())
 }

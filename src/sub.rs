@@ -62,10 +62,6 @@ pub struct Opts {
     #[clap(long)]
     pub no_sequences: bool,
 
-    /// Omit index of subgraph.gfab connectivity
-    #[clap(long)]
-    pub no_connectivity: bool,
-
     /// compression level (-5 to 22) for output .gfab
     #[clap(long, default_value = "6")]
     pub compress: i8,
@@ -117,7 +113,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     {
         let txn = db.transaction()?;
 
-        compute_subgraph(&txn, opts, "input.")?;
+        let reanalyze = compute_subgraph(&txn, opts, "input.")?;
         load::create_tables(&txn)?;
         sub_segment_count =
             txn.query_row("SELECT count(1) FROM temp.sub_segments", NO_PARAMS, |row| {
@@ -139,9 +135,33 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
                 )?;
             }
             txn.execute_batch(include_str!("query/sub.sql"))?;
+
+            // reanalyze connectivity (+ index links)
+            txn.execute_batch(
+                "CREATE TABLE temp.segment_connectivity_hold(
+                    segment_id INTEGER PRIMARY KEY,
+                    connected_component INTEGER NOT NULL,
+                    is_cutpoint INTEGER NOT NULL)",
+            )?;
+            if reanalyze {
+                connectivity::analyze(&txn, "temp.sub_segments")?
+            } else {
+                txn.execute_batch(
+                    "INSERT INTO temp.segment_connectivity_hold(segment_id,connected_component,is_cutpoint)
+                     SELECT segment_id, connected_component, is_cutpoint
+                     FROM input.gfa1_segment_meta WHERE segment_id IN temp.sub_segments"
+                )?
+            }
+            // fill new meta table
+            txn.execute_batch(
+                "INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, connected_component, is_cutpoint, tags_json)
+                    SELECT segment_id, name, sequence_length, revised.connected_component, revised.is_cutpoint, tags_json
+                    FROM input.gfa1_segment_meta LEFT JOIN temp.segment_connectivity_hold revised USING(segment_id)
+                    WHERE segment_id IN temp.sub_segments"
+            )?
         }
 
-        load::create_indexes(&txn, !opts.no_connectivity)?;
+        load::create_indexes(&txn)?;
 
         debug!("flushing {} ...", &opts.outfile);
         txn.commit()?
@@ -253,8 +273,9 @@ fn sub_gfa_write(
     view::write_paths(&db, "WHERE path_id IN temp.sub_paths", out)
 }
 
-// populate temp.sub_segments with the segment IDs of the desired subgraph
-fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<()> {
+// populate temp.sub_segments with the segment IDs of the desired subgraph. Return true iff
+// the subgraph connectivity needs to be reanalyzed (vs. merely copied from the full graph)
+fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<bool> {
     let mut check_start_segments = false;
     db.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
     {
@@ -362,37 +383,25 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
             warn!("--connected overriding --cutpoints");
         }
         // sub_segments = connected components including start_segments
-        if connectivity::has_index(db, input_schema)? {
-            let connected_sql = format!(
-                "CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY);
-                 INSERT INTO temp.sub_segments(segment_id)
-                        SELECT segment_id FROM {s}gfa1_connectivity WHERE component_id IN
-                            (SELECT DISTINCT component_id FROM {s}gfa1_connectivity
-                             WHERE segment_id IN temp.start_segments)
-                    UNION ALL
-                        SELECT segment_id FROM
-                            temp.start_segments LEFT JOIN {s}gfa1_connectivity USING(segment_id)
-                        WHERE component_id IS NULL",
-                s = input_schema
-            );
-            db.execute_batch(&connected_sql)?;
-        } else {
-            warn!("input .gfab lacks connectivity index; discovering connected component(s) on-the-fly (requires SQLite >= 3.34.0)...");
-            let connected_sql = include_str!("query/connected.sql").to_string()
-                + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
-            db.execute_batch(&connected_sql)?;
-        }
+        // copying full connected components, no need to reanalyze connectivity
+        let connected_sql = format!(
+            "CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY);
+             INSERT INTO temp.sub_segments(segment_id)
+                SELECT segment_id FROM {s}gfa1_segment_meta WHERE connected_component IN
+                    (SELECT DISTINCT connected_component FROM {s}gfa1_segment_meta
+                        WHERE segment_id IN temp.start_segments)",
+            s = input_schema
+        );
+        db.execute_batch(&connected_sql)?;
+        return Ok(false);
     } else if cutpoints > 0 {
-        if !connectivity::has_index(db, input_schema)? {
-            panic!("input .gfab lacks connectivity index required for --cutpoints")
-        }
         expand_to_cutpoints(db, input_schema, cutpoints as i64, opts.cutpoints_nt as i64)?
     } else {
         // sub_segments = start_segments
-        db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
+        db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?
     }
 
-    Ok(())
+    Ok(true)
 }
 
 // Compute all segments connected to a set of start segments without traversing a cutpoint segment
@@ -421,12 +430,8 @@ fn expand_to_cutpoints(
     let mut neighbors_query = db.prepare(&neighbors_sql)?;
 
     let mut is_cutpoint_query = db.prepare(&format!(
-        "SELECT is_cutpoint FROM {}gfa1_connectivity WHERE segment_id = ?",
-        input_schema
-    ))?;
-    let mut sequence_length_query = db.prepare(&format!(
-        "SELECT sequence_length FROM {}gfa1_segment_meta WHERE segment_id = ?",
-        input_schema
+        "SELECT is_cutpoint & (coalesce(sequence_length, 0) >= {}) FROM {}gfa1_segment_meta WHERE segment_id = ?",
+        cutpoint_length, input_schema
     ))?;
     let mut is_cutpoint_memo: HashMap<i64, bool> = HashMap::new();
 
@@ -454,16 +459,7 @@ fn expand_to_cutpoints(
         let is_cutpoint = if let Some(&ans) = is_cutpoint_memo.get(&segment) {
             ans
         } else {
-            let mut ans = is_cutpoint_query
-                .query_row(params![segment], |row| row.get(0))
-                .optional()?
-                .unwrap_or(0 as i64)
-                != 0;
-            if ans && cutpoint_length != 0 {
-                let len: i64 =
-                    sequence_length_query.query_row(params![segment], |row| row.get(0))?;
-                ans = len >= cutpoint_length;
-            }
+            let ans = is_cutpoint_query.query_row(params![segment], |row| row.get(0))?;
             is_cutpoint_memo.insert(segment, ans);
             ans
         };
