@@ -1,9 +1,8 @@
 // Connectivity index: at the end of the load process, traverse the DFS forest to discover
-// connected components (treating the segment graph as undirected) and store a relation table with
-// components (of >=2 segments) and the segments therein. Additionally, the table annotates which
-// segments are "cutpoints" whose individual deletion would increase the number of connected
-// components (again, undirected). The connected components and their cutpoints are all found in
-// one DFS forest traversal.
+// connected components (treating the segment graph as undirected). Store a relation table
+// annotating each segment with its connected component, identified by the smallest connected
+// segment_id, and whether it's a "cutpoint" whose individual deletion would increase the number
+// of connected components. Disconnected segments are omitted from the table.
 
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
@@ -35,26 +34,17 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
     let mut visited_bloom = Bloom::new_for_fp_rate(approx_segment_count as usize, 0.05);
 
     // traverse DFS forest to discover connected components
-    let mut component_id: i64 = 1;
     let mut all_segments = db.prepare("SELECT segment_id FROM gfa1_segment_meta")?;
     let mut all_segments_cursor = all_segments.query(NO_PARAMS)?;
     while let Some(segrow) = all_segments_cursor.next()? {
         let segment_id: i64 = segrow.get(0)?;
-        let visited = visited_bloom.check(&segment_id)
+        if !(visited_bloom.check(&segment_id)
             && visited_query
                 .query_row(params!(segment_id), |_| Ok(()))
                 .optional()?
-                .is_some();
-        if !visited
-            && component_dfs(
-                component_id,
-                segment_id,
-                &mut neighbors,
-                &mut insert,
-                &mut visited_bloom,
-            )?
+                .is_some())
         {
-            component_id += 1;
+            component_dfs(segment_id, &mut neighbors, &mut insert, &mut visited_bloom)?
         }
     }
 
@@ -66,7 +56,6 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
 
 // DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
 // component, also marking is_cutpoint therein. https://cp-algorithms.com/graph/cutpoints.html
-// Return true iff the connected component contains at least two segments.
 
 // cutpoint algo state for each discovered segment
 struct DfsSegmentState {
@@ -84,12 +73,11 @@ enum DfsStackFrame {
     Return { segment: i64, child: i64 },
 }
 fn component_dfs(
-    component_id: i64,
     start_segment_id: i64,
     neighbors: &mut rusqlite::Statement,
     insert: &mut rusqlite::Statement,
     visited_bloom: &mut Bloom<i64>,
-) -> Result<bool> {
+) -> Result<()> {
     let mut timestamp: u64 = 0;
     let mut state: BTreeMap<i64, DfsSegmentState> = BTreeMap::new();
     let mut start_degree: u64 = 0;
@@ -157,11 +145,15 @@ fn component_dfs(
         }
     }
 
-    // dump results into gfa1_connectivity
     if timestamp < 2 {
-        return Ok(false);
+        return Ok(());
     }
+    // dump results into gfa1_connectivity
+    let mut component_id = None;
     for (segment_id, segment_state) in state.iter() {
+        if component_id.is_none() {
+            component_id = Some(segment_id) // smallest segment_id
+        }
         let is_cutpoint = if *segment_id != start_segment_id {
             segment_state.is_cutpoint
         } else {
@@ -169,12 +161,12 @@ fn component_dfs(
         };
         insert.execute(params!(
             segment_id,
-            component_id,
+            component_id.unwrap(),
             if is_cutpoint { 1 } else { 0 },
         ))?;
         visited_bloom.set(segment_id);
     }
-    Ok(true)
+    Ok(())
 }
 
 pub fn has_index(db: &rusqlite::Connection, schema: &str) -> Result<bool> {

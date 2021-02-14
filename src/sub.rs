@@ -377,11 +377,13 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
             );
             db.execute_batch(&connected_sql)?;
         } else {
-            warn!("input .gfab lacks connectivity index; discovering connected component(s) on-the-fly (requires SQLite >= 3.34.0)...");
+            warn!("`gfabase sub --connected` will run suboptimally because input .gfab lacks connectivity index");
             let connected_sql = include_str!("query/connected.sql").to_string()
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
             db.execute_batch(&connected_sql)?;
         }
+    // optimization TODO: copying whole connected components, we can copy the relevant parts
+    // of gfa1_connectivity instead of reanalyzing through connectivity::index()
     } else if cutpoints > 0 {
         if !connectivity::has_index(db, input_schema)? {
             panic!("input .gfab lacks connectivity index required for --cutpoints")

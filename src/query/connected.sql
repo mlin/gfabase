@@ -1,4 +1,5 @@
--- Compute all segments in the connected component(s) including a given set of segments.
+-- Compute all segments in the connected component(s) including a given set of segments. This is
+-- used to `sub` connected components when the gfab was created without the connectivity index.
 --  IN: segment IDs in temp.start_segments
 -- OUT: segment IDs in temp.connected_segments
 
