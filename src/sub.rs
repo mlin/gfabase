@@ -10,7 +10,7 @@ use crate::{bad_command, connectivity, load, util, view};
 
 #[derive(Clap)]
 pub struct Opts {
-    /// gfab filename
+    /// gfab filename or http[s] URL
     pub gfab: String,
 
     /// output filename [omit or - for standard output, implying --view]

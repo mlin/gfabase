@@ -54,6 +54,18 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 
 <sup>Fine print: you may get a bit more than you asked for; because the cutpoints are precomputed from an undirected segment graph, some repeat and inversion motifs are considered possible detours that really aren't.</sup>
 
+### Web access
+
+`gfabase view` and `gfabase sub` can read .gfab http/https URLs directly. The web server must support HTTP GET range requests, and the content must be immutable. This is mainly useful to query for a small subgraph, especially with `--no-sequences`. On the other hand, if your query has to traverse a large fraction of the graph, then it may be more efficient to download the whole file upfront.
+
+To publish a .gfab on a web server, it's helpful to first "defragment" the file using the [`genomicsqlite` command-line tool](https://mlin.github.io/GenomicSQLite/guide_db/#genomicsqlite-interactive-shell) made available by `pip3 install genomicsqlite` or `conda install -c mlin genomicsqlite`:
+
+```
+genomicsqlite my.gfab --compact --inner-page-KiB 64 --outer-page-KiB 2
+```
+
+...generating `my.gfab.compact`, a defragmented version that'll be more efficient to access. (`mv my.gfab.compact my.gfab` if so desired.)
+
 ### Building from source
 
 ![CI](https://github.com/mlin/gfabase/workflows/CI/badge.svg?branch=main)

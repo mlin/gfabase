@@ -12,7 +12,7 @@ use crate::util::Result;
 
 #[derive(Clap)]
 pub struct Opts {
-    /// gfab filename
+    /// gfab filename or http[s] URL
     pub input_gfab: String,
     /// output GFA filename [omit or - for standard output]
     #[clap(short, default_value = "-")]
