@@ -113,7 +113,9 @@ pub fn check_gfab_schema(db: &rusqlite::Connection, schema: &str) -> Result<semv
     );
     if let Ok(pg) = pg_result {
         if pg.starts_with("gfabase-v") {
-            if let Ok(v) = semver::Version::parse(&pg[9..]) {
+            // for semver comparison, strip front & back matter from the full pg version string
+            let parts: Vec<&str> = pg.split('-').collect();
+            if let Ok(v) = semver::Version::parse(&parts[1][1..]) {
                 return Ok(v);
             }
         }
@@ -124,7 +126,8 @@ pub fn check_gfab_schema(db: &rusqlite::Connection, schema: &str) -> Result<semv
 pub fn check_gfab_version(gfab_version: &semver::Version) -> Result<()> {
     let req = semver::VersionReq::parse(GFAB_VERSION_REQ).unwrap();
     if req.matches(gfab_version) {
-        let my_version = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+        let my_version_str = env!("CARGO_PKG_VERSION").split('-').next().unwrap();
+        let my_version = semver::Version::parse(my_version_str).unwrap();
         if *gfab_version > my_version {
             warn!(
                 "input .gfab from a newer version of gfabase ({} > {})",
