@@ -56,9 +56,18 @@ Using `gfabase sub` to extract a set or range of segments, we often want to get 
 
 ### Web access
 
-`gfabase view` and `gfabase sub` can read .gfab http/https URLs directly. The web server must support HTTP GET range requests, and the content must be immutable. This is mainly useful to query for a small subgraph, especially with `--no-sequences`. On the other hand, if your query has to traverse a large fraction of the graph, then it may be more efficient to download the whole file upfront.
+`gfabase view` and `gfabase sub` can read .gfab http/https URLs directly. The web server must support HTTP GET range requests, and the content must be immutable. This is mainly useful to query for a small subgraph, especially with `--no-sequences`. On the other hand, a series of queries expected to traverse a large fraction of the graph will be better-served by downloading the whole file upfront.
 
-To publish a .gfab on a web server, it's helpful to first "defragment" the file using the [`genomicsqlite` command-line tool](https://mlin.github.io/GenomicSQLite/guide_db/#genomicsqlite-interactive-shell) made available by `pip3 install genomicsqlite` or `conda install -c mlin genomicsqlite`:
+Here's an example invocation to inspect the subgraph surrounding the HLA locus in a Shasta ONT assembly, remotely accessing a .gfab served by GitHub. (See the above-linked notebooks for details about the flags given.)
+
+```
+./gfabase sub \
+    https://github.com/mlin/gfabase/releases/download/v0.5.0/shasta-HG002-Guppy-3.6.0-run4-UL.gfab \
+    --view --cutpoints 2 --no-sequences --guess-ranges --range \
+    chr6:29,700,000-29,950,000
+```
+
+**To publish a .gfab on the web,** it's helpful to first "defragment" the file using the [`genomicsqlite` command-line tool](https://mlin.github.io/GenomicSQLite/guide_db/#genomicsqlite-interactive-shell) made available by `pip3 install genomicsqlite` or `conda install -c mlin genomicsqlite`:
 
 ```
 genomicsqlite my.gfab --compact --inner-page-KiB 64 --outer-page-KiB 2
