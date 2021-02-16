@@ -229,6 +229,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
 
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
+    let mut header_records: usize = 0;
     let mut maybe_header = None;
     let mut sequence_char_warning = opts.no_twobit;
 
@@ -273,10 +274,12 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
             }
             "H" => {
                 records += 1;
-                if maybe_header.is_some() {
-                    invalid_gfa!("multiple header (H) records");
+                header_records += 1;
+                if maybe_header.is_none() {
+                    maybe_header = Some(prepare_tags_json(line_num, tsv, 1)?);
+                } else if header_records == 2 {
+                    warn!("ignored additional header (H) record(s) after the first");
                 }
-                maybe_header = Some(prepare_tags_json(line_num, tsv, 1)?);
                 Ok(())
             }
             other => {
