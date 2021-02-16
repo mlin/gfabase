@@ -90,9 +90,5 @@ cd gfabase
 Then find the executable `target/release/gfabase`.
 
 <sup>
-1. ./cargo is a wrapper for cargo that generates Cargo.toml from Cargo.toml.in, filling in the crate version based on the git tag.
-</sup>
-<br/>
-<sup>
-2. Our Linux executable releases are built with <tt>RUSTFLAGS="-C link-args=-Wl,-rpath,\$ORIGIN"</tt> to make them look for shared libraries alongside in the same directory first (useful when host SQLite can't be upgraded).
+./cargo is a wrapper for cargo that generates Cargo.toml from Cargo.toml.in, filling in the crate version based on the git tag.
 </sup>

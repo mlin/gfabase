@@ -57,8 +57,6 @@ jobs:
         docker run -v $(pwd):/mnt --rm gfabase cp target/release/gfabase /mnt
         echo -n "required glibc: "
         objdump -t gfabase | grep -o 'GLIBC_.*' | sort -Vr | head -n1
-        echo -n "RPATH: "
-        readelf -d gfabase | grep RPATH
         docker run --rm -v $(pwd):/mnt centos:7 ldd -v -r /mnt/gfabase
         docker run --rm -v $(pwd):/mnt centos:7 /mnt/gfabase version
     - name: digest
@@ -93,7 +91,7 @@ jobs:
     - name: build environment
       run: |
         echo "PATH=${PREFIX}/opt/python/libexec/bin:${PREFIX}/opt/sqlite/bin:${PATH}" >> $GITHUB_ENV
-        echo 'RUSTFLAGS=-C target-cpu=ivybridge -C link-args=-Wl,-rpath,@executable_path/.' >> $GITHUB_ENV
+        echo 'RUSTFLAGS=-C target-cpu=ivybridge' >> $GITHUB_ENV
     - name: build
       run: ./cargo build --release && cp target/release/gfabase ./gfabase-macOS-x86-64
     - name: test
@@ -102,7 +100,6 @@ jobs:
     - name: symbols & digests
       run: |
         otool -L gfabase-macOS-x86-64
-        otool -l gfabase-macOS-x86-64 | grep RPATH
         ./gfabase-macOS-x86-64 version
         sha256sum gfabase-macOS-x86-64
     - uses: actions/upload-artifact@v2
