@@ -50,7 +50,7 @@ time $gfabase add-mappings "${TMPDIR}/Assembly.gfab" /tmp/shasta-HG002-Guppy-3.6
 is "$?" "0" "replace mappings"
 is "$(gsql 'select count(1) from gfa1_segment_mapping')" "10238" "mapQ60 count"
 
-is $($gfabase sub "${TMPDIR}/Assembly.gfab" --range --cutpoints 2 chr12:111766933-111817532 \
+is $($gfabase sub "${TMPDIR}/Assembly.gfab" --range --cutpoints 2 chr12:111766933-111817532 --guess-ranges \
         | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments"
 
@@ -82,7 +82,7 @@ cat "${TMPDIR}/nginx.config"
 nginx -c "${TMPDIR}/nginx.config"
 export SQLITE_WEB_LOG=4
 is $($gfabase sub http://localhost:9999/Assembly.gfab.compact \
-        --range --cutpoints 2 chr12:111766933-111817532 \
+        --range --cutpoints 2 chr12:111766933-111817532 --guess-ranges \
         | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
    "67cfe2746f311654a87cf11050e2711d52e26d433f146e6a527258286746af05" "ALDH2 segments via web"
 nginx_pid=$(cat "${TMPDIR}/nginx.pid")

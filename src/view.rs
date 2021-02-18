@@ -388,7 +388,8 @@ impl<'a> SegmentRangeGuesser<'_> {
                 (SELECT
                     segment_id, refseq_name,
                     min(refseq_begin) AS min_begin, max(refseq_end) AS max_end,
-                    sum(refseq_end - refseq_begin) AS coverage
+                    max(refseq_end) - min(refseq_begin) AS coverage,
+                    sum(refseq_end - refseq_begin) AS coverage2
                 FROM gfa1_segment_mapping
                 {}
                 GROUP BY segment_id, refseq_name)
@@ -397,7 +398,7 @@ impl<'a> SegmentRangeGuesser<'_> {
                 FROM
                     (SELECT
                         segment_id, refseq_name, min_begin, max_end,
-                        row_number() OVER (PARTITION BY segment_id ORDER BY coverage DESC)
+                        row_number() OVER (PARTITION BY segment_id ORDER BY coverage DESC, coverage2 DESC)
                             AS coverage_rank
                     FROM summary)
                 WHERE coverage_rank = 1",
