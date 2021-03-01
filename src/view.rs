@@ -511,7 +511,7 @@ pub fn prepare_iter_walk<'a>(db: &'a rusqlite::Connection) -> Result<rusqlite::S
     match db.prepare(
         "WITH steps AS
             (SELECT json_each.value AS step
-             FROM gfa1_walk_steps, json_each(gfa1_walk_steps.steps)
+             FROM gfa1_walk_steps, json_each(gfa1_walk_steps.steps_jsarray)
              WHERE walk_id = ?)
          SELECT
             json_extract(step,'$.s'),

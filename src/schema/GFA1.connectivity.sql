@@ -9,8 +9,10 @@ CREATE TABLE gfa1_connectivity(
 
 -- index Walks to connected components they touch
 CREATE TABLE gfa1_walk_connectivity(
-    walk_id INTEGER NOT NULL REFERENCES gfa1_walk(walk_id),
-    component_id INTEGER NOT NULL REFERENCES gfa1_connectivity(component_id),
+    walk_id INTEGER NOT NULL
+        REFERENCES gfa1_walk(walk_id),
+    component_id INTEGER NOT NULL, 
+        -- can't REFERENCES gfa1_connectivity(component_id) because that's not unique
     PRIMARY KEY (walk_id, component_id)
 ) WITHOUT ROWID;
 

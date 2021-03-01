@@ -118,7 +118,7 @@ pub fn main(opts: &Opts) -> Result<()> {
                     SELECT path_id, name, tags_json
                     FROM temp.path_hold;
                 INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
-                    SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
+                    SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
                     FROM temp.walk_hold",
             )?;
             debug!("insertions complete");

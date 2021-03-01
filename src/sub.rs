@@ -204,19 +204,23 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                 (SELECT DISTINCT path_id FROM gfa1_path_element
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
-    if opts.connected && connectivity::has_index(&txn, "")? {
+    let walks = if opts.connected && connectivity::has_index(&txn, "")? {
         compute_sub_walks(&txn, "")?;
-    } else if txn
-        .query_row(
-            "SELECT walk_id FROM input.gfa1_walk LIMIT 1",
-            NO_PARAMS,
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some()
-    {
-        warn!("excluding all Walks; including them requires --connected (and connectivity index)")
-    }
+        true
+    } else {
+        if txn
+            .query_row("SELECT walk_id FROM gfa1_walk LIMIT 1", NO_PARAMS, |_| {
+                Ok(())
+            })
+            .optional()?
+            .is_some()
+        {
+            warn!(
+                "excluding all Walks; including them requires --connected (and connectivity index)"
+            )
+        }
+        false
+    };
 
     let mut maybe_guesser = if opts.guess_ranges {
         Some(view::SegmentRangeGuesser::new(
@@ -229,7 +233,9 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
     if opts.outfile == "-" && !opts.bandage && atty::is(atty::Stream::Stdout) {
         // interactive mode: pipe into less -S
-        view::less(|less_in| sub_gfa_write(&txn, &mut maybe_guesser, !opts.no_sequences, less_in))?
+        view::less(|less_in| {
+            sub_gfa_write(&txn, &mut maybe_guesser, !opts.no_sequences, walks, less_in)
+        })?
     } else {
         let mut output_gfa = String::from(&opts.outfile);
         if opts.bandage && output_gfa == "-" {
@@ -242,6 +248,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                 &txn,
                 &mut maybe_guesser,
                 !opts.no_sequences,
+                walks,
                 &mut *writer_box,
             )?;
         }
@@ -263,6 +270,7 @@ fn sub_gfa_write(
     db: &rusqlite::Connection,
     maybe_guesser: &mut Option<view::SegmentRangeGuesser>,
     sequences: bool,
+    walks: bool,
     out: &mut dyn io::Write,
 ) -> Result<()> {
     let mut tag_editor = |segment_id: i64, tags: &mut json::JsonValue| -> Result<()> {
@@ -288,7 +296,10 @@ fn sub_gfa_write(
         out,
     )?;
     view::write_paths(&db, "WHERE path_id IN temp.sub_paths", out)?;
-    view::write_walks(&db, "WHERE walk_id IN temp.sub_walks", out)
+    if walks {
+        view::write_walks(&db, "WHERE walk_id IN temp.sub_walks", out)?
+    }
+    Ok(())
 }
 
 // populate temp.sub_segments with the segment IDs of the desired subgraph

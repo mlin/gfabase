@@ -19,6 +19,7 @@ CREATE UNIQUE INDEX gfa1_path_name ON
 CREATE INDEX gfa1_path_segment ON
     gfa1_path_element(segment_id);
 
-CREATE INDEX gfa1_walk_sample_refseq ON gfa1_walk(sample,refseq_name)
+CREATE INDEX gfa1_walk_sample_refseq ON
+    gfa1_walk(sample,refseq_name)
 
 -- Added in code: GenomicSQLite Genomic Range Index on gfa1_segment_mapping and gfa1_walk
