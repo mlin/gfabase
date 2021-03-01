@@ -30,7 +30,8 @@ CREATE TABLE gfa1_segment_mapping(
     refseq_name TEXT NOT NULL COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
     refseq_begin INTEGER NOT NULL,           -- zero-based begin of associated range
     refseq_end INTEGER NOT NULL,             -- end (exclusive) of associated range
-    tags_json TEXT                           -- extra info e.g. orientation, segment begin/end
+    tags_json TEXT,                          -- extra info e.g. orientation, segment begin/end
+    CHECK(refseq_begin >= 0 AND refseq_end>=refseq_begin)
 );
 
 -- Link
@@ -80,4 +81,28 @@ CREATE TABLE gfa1_path_element(
 -- Header
 CREATE TABLE gfa1_header(
     tags_json TEXT
+);
+
+-- Walk
+CREATE TABLE gfa1_walk(
+    walk_id INTEGER PRIMARY KEY,
+    sample TEXT COLLATE UINT,
+    hap_idx INTEGER NOT NULL,
+    refseq_name TEXT NOT NULL COLLATE UINT,
+    refseq_begin INTEGER NOT NULL,
+    refseq_end INTEGER NOT NULL,
+    tags_json TEXT,
+    CHECK(refseq_begin >= 0 AND refseq_end>=refseq_begin)
+);
+
+-- Walk steps. Because walks tend to dominate GFA file size, we don't atomize them into SQL-indexed
+-- rows like we do paths. Instead, we store each sequence of (segment_id,orientation) as a JSON
+-- array, in which each segment_id may be delta-encoded relative to its immediate predecessor:
+--      [{"s":12345},{"+":1},...,{"s":23456,"<":1},{"-":1,"<":1},...]
+-- ("<":1 indicates reverse orientation; forward orientation otherwise assumed)
+
+CREATE TABLE gfa1_walk_steps(
+    walk_id INTEGER NOT NULL
+        REFERENCES gfa1_walk(walk_id),
+    steps_jsarray TEXT DEFAULT '[]'
 );

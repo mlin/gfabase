@@ -81,7 +81,21 @@ pub fn main(opts: &Opts) -> Result<()> {
                 refseq_name TEXT NOT NULL,
                 refseq_begin INTEGER NOT NULL,
                 refseq_end INTEGER NOT NULL
-            );",
+            );
+            CREATE TABLE temp.path_hold(
+                path_id INTEGER PRIMARY KEY,
+                name TEXT COLLATE UINT,
+                tags_json TEXT
+            );
+            CREATE TABLE temp.walk_hold(
+                walk_id INTEGER PRIMARY KEY,
+                sample TEXT COLLATE UINT,
+                hap_idx INTEGER NOT NULL,
+                refseq_name TEXT NOT NULL COLLATE UINT,
+                refseq_begin INTEGER NOT NULL,
+                refseq_end INTEGER NOT NULL,
+                tags_json TEXT
+            )",
         )?;
 
         // intake GFA records
@@ -99,7 +113,13 @@ pub fn main(opts: &Opts) -> Result<()> {
                     FROM temp.segment_meta_hold;
                 INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_end)
                     SELECT segment_id, refseq_name, refseq_begin, refseq_end
-                    FROM temp.segment_mapping_hold ORDER BY segment_id",
+                    FROM temp.segment_mapping_hold ORDER BY segment_id;
+                INSERT INTO gfa1_path(path_id, name, tags_json)
+                    SELECT path_id, name, tags_json
+                    FROM temp.path_hold;
+                INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
+                    SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
+                    FROM temp.walk_hold",
             )?;
             debug!("insertions complete");
         }
@@ -176,15 +196,13 @@ pub fn create_indexes(db: &rusqlite::Connection, connectivity: bool) -> Result<(
         }
     }
 
-    // add GRI for segment mappings
-    let gri_sql = db.create_genomic_range_index_sql(
-        "gfa1_segment_mapping",
-        "refseq_name",
-        "refseq_begin",
-        "refseq_end",
-    )?;
-    debug!("\tindexing segment mappings by genomic range ...");
-    db.execute_batch(&gri_sql)?;
+    // add GRIs
+    debug!("\tindexing segment mappings & walks by genomic range ...");
+    for table in vec!["gfa1_segment_mapping", "gfa1_walk"] {
+        let gri_sql =
+            db.create_genomic_range_index_sql(table, "refseq_name", "refseq_begin", "refseq_end")?;
+        db.execute_batch(&gri_sql)?;
+    }
 
     if connectivity {
         debug!("\tindexing graph connectivity ...");
@@ -222,10 +240,14 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
             parse_genomic_range_end(?1)",
     )?;
     let mut stmt_insert_path =
-        txn.prepare("INSERT INTO gfa1_path(path_id,name,tags_json) VALUES(?,?,?)")?;
+        txn.prepare("INSERT INTO temp.path_hold(path_id,name,tags_json) VALUES(?,?,?)")?;
     let mut stmt_insert_path_element = txn.prepare(
         "INSERT INTO gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_previous) VALUES(?,?,?,?,?)"
     )?;
+    let mut stmt_insert_walk =
+        txn.prepare("INSERT INTO temp.walk_hold(sample,hap_idx,refseq_name,refseq_begin,refseq_end,tags_json) VALUES(?,?,?,?,?,?)")?;
+    let mut stmt_insert_walk_steps =
+        txn.prepare("INSERT INTO gfa1_walk_steps(walk_id,steps_jsarray) VALUES(?,?)")?;
 
     let mut segments_by_name = HashMap::new();
     let mut records: usize = 0;
@@ -281,6 +303,18 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
                     warn!("ignored additional header (H) record(s) after the first");
                 }
                 Ok(())
+            }
+            "W" => {
+                records += 1;
+                insert_gfa1_walk(
+                    line_num,
+                    tsv,
+                    txn,
+                    opts.always_names,
+                    &mut stmt_insert_walk,
+                    &mut stmt_insert_walk_steps,
+                    &segments_by_name,
+                )
             }
             other => {
                 if !other_record_types.contains(other) {
@@ -533,6 +567,114 @@ fn insert_gfa1_path(
             cigar
         ])?;
     }
+    Ok(())
+}
+
+fn insert_gfa1_walk(
+    line_num: usize,
+    tsv: &Vec<&str>,
+    txn: &Transaction,
+    always_names: bool,
+    stmt_walk: &mut Statement,
+    stmt_steps: &mut Statement,
+    segments_by_name: &HashMap<String, i64>,
+) -> Result<()> {
+    assert_eq!(tsv[0], "W");
+    if tsv.len() < 7 {
+        invalid_gfa!("(Ln {}) malformed W line: {}", line_num, tsv.join("\t"));
+    }
+
+    let sample = tsv[1];
+    let hap_idx: u64 = match tsv[2].parse() {
+        Ok(i) => i,
+        Err(_) => invalid_gfa!("(Ln {}) malformed HapIdx: {}", line_num, tsv[2]),
+    };
+    let refseq_name = tsv[3];
+    let refseq_begin: u64 = match tsv[4].parse() {
+        Ok(i) => i,
+        Err(_) => invalid_gfa!("(Ln {}) malformed SeqStart: {}", line_num, tsv[4]),
+    };
+    let refseq_end: u64 = match tsv[5].parse() {
+        Ok(i) => i,
+        Err(_) => invalid_gfa!("(Ln {}) malformed SeqEnd: {}", line_num, tsv[5]),
+    };
+    let tags_json = prepare_tags_json(line_num, tsv, 7)?;
+    let tags_json_text = tags_json.dump();
+
+    stmt_walk.execute(params![
+        sample,
+        hap_idx as i64,
+        refseq_name,
+        refseq_begin as i64,
+        refseq_end as i64,
+        if tags_json_text.trim() != "{}" {
+            Some(tags_json_text)
+        } else {
+            None
+        }
+    ])?;
+    let walk_id = txn.last_insert_rowid();
+
+    // JSON-encode the walk steps
+    let mut first_step = true;
+    let mut steps_json_text = String::from("[");
+    let mut prev_segment = None;
+    for pre_step in tsv[6].split('>') {
+        let mut rev = false;
+        for segment_name in pre_step.split('<') {
+            if first_step {
+                steps_json_text.push_str("{\"");
+                first_step = false
+            } else {
+                steps_json_text.push_str(",{\"");
+            }
+            let maybe_segment_id = if always_names {
+                None
+            } else {
+                name_to_id(segment_name)
+            };
+            let segment_id: i64 = match maybe_segment_id {
+                Some(id) => id,
+                None => match segments_by_name.get(segment_name) {
+                    Some(id) => *id,
+                    None => {
+                        invalid_gfa!("(Ln {}) unknown segment name: {}", line_num, segment_name)
+                    }
+                },
+            };
+            let segment_id_text = format!("s\":{}", segment_id);
+            // delta-encode the segment id, if that's shorter than writing it out
+            let maybe_delta_text = match prev_segment {
+                Some(pid) => {
+                    let (sign, delta) = if segment_id >= pid {
+                        ("+", segment_id - pid)
+                    } else {
+                        ("-", pid - segment_id)
+                    };
+                    let delta_text = format!("{}\":{}", sign, delta);
+                    if delta_text.len() < segment_id_text.len() {
+                        Some(delta_text)
+                    } else {
+                        None
+                    }
+                }
+                None => None,
+            };
+            steps_json_text.push_str(&maybe_delta_text.unwrap_or(segment_id_text));
+            prev_segment = Some(segment_id);
+            // after splitting on '>', the first element of pre_step is forward and remaining
+            // elements are reverse
+            if rev {
+                steps_json_text.push_str(",\"r\":1}");
+            } else {
+                steps_json_text.push_str("}");
+                rev = true;
+            }
+        }
+        steps_json_text.push_str("}");
+    }
+    steps_json_text.push_str("]");
+    stmt_steps.execute(params![walk_id, steps_json_text])?;
     Ok(())
 }
 

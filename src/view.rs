@@ -86,7 +86,8 @@ pub fn main(opts: &Opts) -> Result<()> {
                 write_header(&txn, out)?;
                 write_segments(&txn, "", !opts.no_sequences, &mut tag_editor, out)?;
                 write_links(&txn, "", out)?;
-                write_paths(&txn, "", out)?
+                write_paths(&txn, "", out)?;
+                write_walks(&txn, "", out)?
             }
 
             if opts.bandage {
@@ -326,6 +327,43 @@ pub fn write_paths(
     Ok(())
 }
 
+pub fn write_walks(
+    db: &rusqlite::Connection,
+    where_clause: &str,
+    writer: &mut dyn io::Write,
+) -> Result<()> {
+    let mut iter_walk_query = prepare_iter_walk(db)?;
+    let walks_query_sql = format!(
+        "SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, coalesce(tags_json, '{{}}')
+         FROM gfa1_walk {} ORDER BY sample, hap_idx, refseq_name, refseq_begin", where_clause);
+    let mut walks_query = db.prepare(&walks_query_sql)?;
+    let mut walks_cursor = walks_query.query(NO_PARAMS)?;
+    while let Some(row) = walks_cursor.next()? {
+        let walk_id: i64 = row.get(0)?;
+        let sample: String = row.get(1)?;
+        let hap_idx: i64 = row.get(2)?;
+        let refseq_name: String = row.get(3)?;
+        let refseq_begin: i64 = row.get(4)?;
+        let refseq_end: i64 = row.get(5)?;
+        let tags_json: String = row.get(6)?;
+        writer.write_fmt(format_args!(
+            "W\t{}\t{}\t{}\t{}\t{}\t",
+            sample, hap_idx, refseq_name, refseq_begin, refseq_end
+        ))?;
+        iter_walk(&mut iter_walk_query, walk_id, |segment_id, reverse| {
+            writer.write_fmt(format_args!(
+                "{}{}",
+                if reverse { ">" } else { "<" },
+                segment_id
+            ))?;
+            Ok(true)
+        })?;
+        write_tags("gfa1_walk", walk_id, &tags_json, writer)?;
+        writer.write(b"\n")?;
+    }
+    Ok(())
+}
+
 fn write_tags_with_editor(
     table: &str,
     rowid: i64,
@@ -464,4 +502,59 @@ impl<'a> SegmentRangeGuesser<'_> {
         info!("wrote CSV with guessed segment ranges to {}", csv_filename);
         Ok(())
     }
+}
+
+// Helpers for iterating over steps of a GFA Walk, automatically decoding any stored deltas to
+// produce a sequence of (segment_id: i64, reverse_orientation: bool).
+// First, a query preparation amortized over multiple Walks if needed.
+pub fn prepare_iter_walk<'a>(db: &'a rusqlite::Connection) -> Result<rusqlite::Statement<'a>> {
+    match db.prepare(
+        "WITH steps AS
+            (SELECT json_each.value AS step
+             FROM gfa1_walk_steps, json_each(gfa1_walk_steps.steps)
+             WHERE walk_id = ?)
+         SELECT
+            json_extract(step,'$.s'),
+            json_extract(step,'$.+'),
+            json_extract(step,'$.-'),
+            coalesce(json_extract(step,'$.<'),0) AS reverse
+         FROM steps",
+    ) {
+        Ok(stmt) => Ok(stmt),
+        Err(e) => Err(util::Error::DbError(e)),
+    }
+}
+
+// Then, the iteration function taking your callback, which returns false to stop the walk (without
+// indicating any error).
+pub fn iter_walk<F>(query: &mut rusqlite::Statement, walk_id: i64, mut f: F) -> Result<()>
+where
+    F: FnMut(i64, bool) -> Result<bool>,
+{
+    let mut prev_segment = None;
+    let mut cursor = query.query(params![walk_id])?;
+    while let Some(row) = cursor.next()? {
+        let maybe_segment_id: Option<i64> = row.get(0)?;
+        let maybe_plus: Option<i64> = row.get(1)?;
+        let maybe_minus: Option<i64> = row.get(2)?;
+        let reverse: i64 = row.get(3)?;
+        let segment_id = if maybe_segment_id.is_some() {
+            maybe_segment_id.unwrap()
+        } else if prev_segment.is_some() && maybe_plus.is_some() {
+            prev_segment.unwrap() + maybe_plus.unwrap()
+        } else if prev_segment.is_some() && maybe_minus.is_some() {
+            prev_segment.unwrap() - maybe_minus.unwrap()
+        } else {
+            return Err(util::Error::InvalidGfab {
+                message: String::from("Walk has invalid delta-encoding"),
+                table: String::from("gfa1_walk_steps"),
+                rowid: walk_id,
+            });
+        };
+        prev_segment = Some(segment_id);
+        if !f(segment_id, reverse != 0)? {
+            break;
+        }
+    }
+    Ok(())
 }
