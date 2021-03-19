@@ -30,8 +30,7 @@ CREATE TABLE gfa1_segment_mapping(
     refseq_name TEXT NOT NULL COLLATE UINT,  -- associated reference sequence (e.g. chromosome name)
     refseq_begin INTEGER NOT NULL,           -- zero-based begin of associated range
     refseq_end INTEGER NOT NULL,             -- end (exclusive) of associated range
-    tags_json TEXT,                          -- extra info e.g. orientation, segment begin/end
-    CHECK(refseq_begin >= 0 AND refseq_end>=refseq_begin)
+    tags_json TEXT                           -- extra info e.g. orientation, segment begin/end
 );
 
 -- Link
@@ -91,8 +90,7 @@ CREATE TABLE gfa1_walk(
     refseq_name TEXT NOT NULL COLLATE UINT,
     refseq_begin INTEGER NOT NULL,
     refseq_end INTEGER NOT NULL,
-    tags_json TEXT,
-    CHECK(refseq_begin >= 0 AND refseq_end>=refseq_begin)
+    tags_json TEXT
 );
 
 -- Walk steps. Because walks tend to dominate GFA file size, we don't atomize them into SQL-indexed

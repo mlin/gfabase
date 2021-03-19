@@ -28,12 +28,11 @@ pub struct Opts {
     /// SEGMENTs are reference sequence ranges like chr7:1,234-5,678 to locate in segment mappings
     #[clap(long)]
     pub range: bool,
-
     /// Treat SEGMENTs as text names even if they look like integer IDs
     #[clap(long)]
     pub always_names: bool,
 
-    /// Expand from specified segments to complete (undirected) connected component(s)
+    /// Expand from specified segments to complete (undirected) connected component(s), and include Walks
     #[clap(long)]
     pub connected: bool,
 
@@ -57,6 +56,14 @@ pub struct Opts {
     /// For each segment with reference mappings, set gr:Z tag with one guessed range summarizing the mappings (implies --view)
     #[clap(long)]
     pub guess_ranges: bool,
+
+    /// Given --connected, include Walks only for these samples, instead of all
+    #[clap(long, name = "SAMPLE")]
+    pub walk_samples: Vec<String>,
+
+    /// Omit Walks even if --connected
+    #[clap(long)]
+    pub no_walks: bool,
 
     /// Omit segment sequences
     #[clap(long)]
@@ -141,28 +148,30 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
             txn.execute_batch(include_str!("query/sub.sql"))?;
         }
 
-        if opts.connected && connectivity::has_index(&txn, "input.")? {
-            compute_sub_walks(&txn, "input.")?;
-            txn.execute_batch(
-                "INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
-                    SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
-                    FROM input.gfa1_walk WHERE walk_id IN temp.sub_walks;
-                 INSERT INTO gfa1_walk_steps(walk_id, steps_jsarray)
-                    SELECT walk_id, steps_jsarray
-                    FROM input.gfa1_walk_steps WHERE walk_id in TEMP.sub_walks"
-            )?;
-        } else if txn
-            .query_row(
-                "SELECT walk_id FROM input.gfa1_walk LIMIT 1",
-                NO_PARAMS,
-                |_| Ok(()),
-            )
-            .optional()?
-            .is_some()
-        {
-            warn!(
-                "excluding all Walks; including them requires --connected (and connectivity index)"
-            )
+        if !opts.no_walks {
+            if opts.connected && connectivity::has_index(&txn, "input.")? {
+                compute_sub_walks(&txn, &opts.walk_samples, "input.")?;
+                txn.execute_batch(
+                    "INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
+                        SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
+                        FROM input.gfa1_walk WHERE walk_id IN temp.sub_walks;
+                    INSERT INTO gfa1_walk_steps(walk_id, steps_jsarray)
+                        SELECT walk_id, steps_jsarray
+                        FROM input.gfa1_walk_steps WHERE walk_id in TEMP.sub_walks"
+                )?;
+            } else if txn
+                .query_row(
+                    "SELECT walk_id FROM input.gfa1_walk LIMIT 1",
+                    NO_PARAMS,
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some()
+            {
+                warn!(
+                    "excluding all Walks; including them requires --connected (and connectivity index)"
+                )
+            }
         }
 
         load::create_indexes(&txn, !opts.no_connectivity)?;
@@ -205,7 +214,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
     let walks = if opts.connected && connectivity::has_index(&txn, "")? {
-        compute_sub_walks(&txn, "")?;
+        compute_sub_walks(&txn, &opts.walk_samples, "")?;
         true
     } else {
         if txn
@@ -304,12 +313,64 @@ fn sub_gfa_write(
 
 // populate temp.sub_segments with the segment IDs of the desired subgraph
 fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<()> {
+    compute_start_segments(db, opts, input_schema)?;
+
+    let mut cutpoints = opts.cutpoints;
+    if opts.cutpoints_nt > 0 {
+        cutpoints = cmp::max(1, cutpoints);
+    }
+
+    if opts.connected {
+        if cutpoints > 0 {
+            warn!("--connected overriding --cutpoints");
+        }
+        // sub_segments = connected components including start_segments
+        if connectivity::has_index(db, input_schema)? {
+            let connected_sql = format!(
+                "CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY);
+                 INSERT INTO temp.sub_segments(segment_id)
+                        SELECT segment_id FROM {s}gfa1_connectivity WHERE component_id IN
+                            (SELECT DISTINCT component_id FROM {s}gfa1_connectivity
+                             WHERE segment_id IN temp.start_segments)
+                    UNION ALL
+                        SELECT segment_id FROM
+                            temp.start_segments LEFT JOIN {s}gfa1_connectivity USING(segment_id)
+                        WHERE component_id IS NULL",
+                s = input_schema
+            );
+            db.execute_batch(&connected_sql)?;
+        } else {
+            warn!("`gfabase sub --connected` will run suboptimally because input .gfab lacks connectivity index");
+            let connected_sql = include_str!("query/connected.sql").to_string()
+                + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
+            db.execute_batch(&connected_sql)?;
+        }
+    // optimization TODO: copying whole connected components, we can copy the relevant parts
+    // of gfa1_connectivity instead of reanalyzing through connectivity::index()
+    } else if cutpoints > 0 {
+        if !connectivity::has_index(db, input_schema)? {
+            panic!("input .gfab lacks connectivity index required for --cutpoints")
+        }
+        expand_to_cutpoints(db, input_schema, cutpoints as i64, opts.cutpoints_nt as i64)?
+    } else {
+        // sub_segments = start_segments
+        db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
+    }
+
+    Ok(())
+}
+
+// Populate temp.start_segments with the segment IDs directly implied by the command line (without
+// yet handling --connected or --cutpoints).
+fn compute_start_segments(
+    db: &rusqlite::Connection,
+    opts: &Opts,
+    input_schema: &str,
+) -> Result<()> {
     let mut check_start_segments = false;
     db.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
     {
-        let mut insert_segment = if !opts.range {
-            db.prepare("INSERT OR REPLACE INTO temp.start_segments(segment_id) VALUES(?)")?
-        } else {
+        let mut insert_segment = if opts.range {
             // GRI query
             db.prepare(&format!(
                 "INSERT OR REPLACE INTO temp.start_segments(segment_id)
@@ -321,6 +382,8 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                             parse_genomic_range_end(?1))",
                 input_schema, input_schema
             ))?
+        } else {
+            db.prepare("INSERT OR REPLACE INTO temp.start_segments(segment_id) VALUES(?)")?
         };
         let mut find_segment_by_name = db.prepare(&format!(
             "SELECT segment_id FROM {}gfa1_segment_meta WHERE name=?",
@@ -399,48 +462,6 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                 );
             }
         }
-    }
-
-    let mut cutpoints = opts.cutpoints;
-    if opts.cutpoints_nt > 0 {
-        cutpoints = cmp::max(1, cutpoints);
-    }
-
-    if opts.connected {
-        if cutpoints > 0 {
-            warn!("--connected overriding --cutpoints");
-        }
-        // sub_segments = connected components including start_segments
-        if connectivity::has_index(db, input_schema)? {
-            let connected_sql = format!(
-                "CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY);
-                 INSERT INTO temp.sub_segments(segment_id)
-                        SELECT segment_id FROM {s}gfa1_connectivity WHERE component_id IN
-                            (SELECT DISTINCT component_id FROM {s}gfa1_connectivity
-                             WHERE segment_id IN temp.start_segments)
-                    UNION ALL
-                        SELECT segment_id FROM
-                            temp.start_segments LEFT JOIN {s}gfa1_connectivity USING(segment_id)
-                        WHERE component_id IS NULL",
-                s = input_schema
-            );
-            db.execute_batch(&connected_sql)?;
-        } else {
-            warn!("`gfabase sub --connected` will run suboptimally because input .gfab lacks connectivity index");
-            let connected_sql = include_str!("query/connected.sql").to_string()
-                + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
-            db.execute_batch(&connected_sql)?;
-        }
-    // optimization TODO: copying whole connected components, we can copy the relevant parts
-    // of gfa1_connectivity instead of reanalyzing through connectivity::index()
-    } else if cutpoints > 0 {
-        if !connectivity::has_index(db, input_schema)? {
-            panic!("input .gfab lacks connectivity index required for --cutpoints")
-        }
-        expand_to_cutpoints(db, input_schema, cutpoints as i64, opts.cutpoints_nt as i64)?
-    } else {
-        // sub_segments = start_segments
-        db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
     }
 
     Ok(())
@@ -557,7 +578,11 @@ fn expand_to_cutpoints(
 
 // Compute temp.sub_walks the walk IDs touching the connected components in temp.sub_segments,
 // ASSUMING that the latter was populated with --connected. Requires connectivity index
-fn compute_sub_walks(db: &rusqlite::Connection, schema: &str) -> Result<()> {
+fn compute_sub_walks(
+    db: &rusqlite::Connection,
+    walk_samples: &Vec<String>,
+    schema: &str,
+) -> Result<()> {
     db.execute_batch(&format!(
         "CREATE TABLE temp.sub_components(component_id INTEGER PRIMARY KEY);
          INSERT INTO temp.sub_components(component_id)
@@ -565,15 +590,27 @@ fn compute_sub_walks(db: &rusqlite::Connection, schema: &str) -> Result<()> {
             WHERE segment_id IN temp.sub_segments",
         schema = schema
     ))?;
-    db.execute_batch(&format!(
+    let mut walks_query = format!(
         "CREATE TABLE temp.sub_walks(walk_id INTEGER PRIMARY KEY);
          INSERT INTO temp.sub_walks(walk_id)
-            SELECT DISTINCT walk_id FROM {schema}gfa1_walk_connectivity
+            SELECT walk_id FROM {schema}gfa1_walk
             WHERE walk_id NOT IN
                 (SELECT DISTINCT walk_id FROM {schema}gfa1_walk_connectivity
                  WHERE component_id NOT IN temp.sub_components)",
         schema = schema
-    ))?;
+    );
+    if !walk_samples.is_empty() {
+        db.execute_batch(
+            "CREATE TABLE temp.sub_walk_samples(sample TEXT PRIMARY KEY COLLATE UINT)",
+        )?;
+        let mut insert_walk_sample =
+            db.prepare("INSERT INTO temp.sub_walk_samples(sample) VALUES(?)")?;
+        for walk_sample in walk_samples {
+            insert_walk_sample.execute(params![walk_sample])?;
+        }
+        walks_query += "AND sample IN temp.sub_walk_samples"
+    }
+    db.execute_batch(&walks_query)?;
     Ok(())
     // FIXME: lost any "walks" of disconnected segments (included in the sub). Probably this will
     // be most easily fixed by including them as their own components in the connectivity index.
