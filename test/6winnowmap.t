@@ -23,6 +23,7 @@ zstd -dc test/data/shasta-HG002-Guppy-3.6.0-run4-UL.chr21.gfa.zst | \
     $gfabase --verbose load -o "${TMPDIR}/shasta-HG002.chr21.gfab"
 is "$?" "0" "gfabase load"
 
+docker pull centos:7
 miniwdl run workflows/gfab_winnowmap.wdl \
     gfab="${TMPDIR}/shasta-HG002.chr21.gfab" \
     reference_fasta_gz=/tmp/GCA_000001405.15_GRCh38_no_alt_analysis_set.fna.gz \
