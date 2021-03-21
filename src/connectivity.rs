@@ -7,10 +7,9 @@
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension, NO_PARAMS};
 use std::cmp;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::util::Result;
-use crate::view;
 
 pub fn index(db: &rusqlite::Connection) -> Result<()> {
     db.execute_batch(include_str!("schema/GFA1.connectivity.sql"))?;
@@ -49,30 +48,14 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
         }
     }
 
-    // index each Walk to associated component(s)
-    let mut iter_walk_query = view::prepare_iter_walk(db)?;
-    let mut segment_component_query =
-        db.prepare("SELECT component_id FROM gfa1_connectivity WHERE segment_id = ?")?;
-    let mut walk_component_insert =
-        db.prepare("INSERT INTO gfa1_walk_connectivity(walk_id, component_id) VALUES(?,?)")?;
-    let mut walks = db.prepare("SELECT walk_id FROM gfa1_walk")?;
-    let mut walks_cursor = walks.query(NO_PARAMS)?;
-    while let Some(walk_row) = walks_cursor.next()? {
-        let walk_id: i64 = walk_row.get(0)?;
-        let mut components = HashSet::new();
-        view::iter_walk(&mut iter_walk_query, walk_id, |segment_id, _| {
-            let maybe_component: Option<i64> = segment_component_query
-                .query_row(params![segment_id], |row| row.get(0))
-                .optional()?;
-            if let Some(component_id) = maybe_component {
-                components.insert(component_id);
-            }
-            Ok(true)
-        })?;
-        for component_id in components.iter() {
-            walk_component_insert.execute(params![walk_id, component_id])?;
-        }
-    }
+    // index each Walk to the associated connected component. By definition, all segments in a Walk
+    // must be in one connected component, so it suffices just to look up one exemplar segment.
+    // Also, checking all of them would be costly.
+    db.execute_batch(
+        "INSERT INTO gfa1_walk_connectivity(walk_id,component_id)
+         SELECT walk_id, component_id
+         FROM gfa1_walk INNER JOIN gfa1_connectivity ON gfa1_walk.min_segment_id = gfa1_connectivity.segment_id"
+    )?;
 
     db.execute_batch(
         "CREATE INDEX gfa1_connectivity_component ON gfa1_connectivity(component_id);

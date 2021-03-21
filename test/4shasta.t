@@ -88,4 +88,4 @@ is $($gfabase sub http://localhost:9999/Assembly.gfab.compact \
 nginx_pid=$(cat "${TMPDIR}/nginx.pid")
 kill -QUIT $nginx_pid
 
-#rm -rf "$TMPDIR"
+rm -rf "$TMPDIR"

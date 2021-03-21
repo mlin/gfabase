@@ -4,6 +4,7 @@ use json::object;
 use log::{debug, info, log_enabled, warn};
 use num_format::{Locale, ToFormattedString};
 use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
+use std::cmp;
 use std::collections::{HashMap, HashSet};
 
 use crate::bad_command;
@@ -38,6 +39,10 @@ pub struct Opts {
     #[clap(long)]
     pub no_twobit: bool,
 
+    /// Memory budget (GiB)
+    #[clap(long, default_value = "4")]
+    pub memory_gbytes: u32,
+
     /// Compression level (-5 to 22)
     #[clap(long, default_value = "6")]
     pub compress: i8,
@@ -60,7 +65,11 @@ pub fn main(opts: &Opts) -> Result<()> {
     }
 
     // formulate GenomicSQLite configuration JSON
-    let mut db = new_db(&opts.output_gfab, opts.compress, 1024)?;
+    let mut db = new_db(
+        &opts.output_gfab,
+        opts.compress,
+        std::cmp::max(1024, opts.memory_gbytes * 400),
+    )?;
 
     let records_processed;
     {
@@ -94,6 +103,8 @@ pub fn main(opts: &Opts) -> Result<()> {
                 refseq_name TEXT NOT NULL COLLATE UINT,
                 refseq_begin INTEGER NOT NULL,
                 refseq_end INTEGER NOT NULL,
+                min_segment_id INTEGER NOT NULL,
+                max_segment_id INTEGER NOT NULL,
                 tags_json TEXT
             )",
         )?;
@@ -105,7 +116,7 @@ pub fn main(opts: &Opts) -> Result<()> {
             warn!("no input records processed")
         } else {
             info!("processed {} GFA1 record(s)", records_processed);
-            debug!("writing segment metadata...");
+            debug!("writing metadata tables for Segments, Paths, and Walks...");
             // copy metadata as planned
             txn.execute_batch(
                 "INSERT INTO gfa1_segment_meta(segment_id, name, sequence_length, tags_json)
@@ -117,8 +128,11 @@ pub fn main(opts: &Opts) -> Result<()> {
                 INSERT INTO gfa1_path(path_id, name, tags_json)
                     SELECT path_id, name, tags_json
                     FROM temp.path_hold;
-                INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
-                    SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
+                INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end,
+                                      min_segment_id, max_segment_id, tags_json)
+                    SELECT
+                        walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end,
+                        min_segment_id, max_segment_id, tags_json
                     FROM temp.walk_hold",
             )?;
             debug!("insertions complete");
@@ -147,7 +161,7 @@ pub fn main(opts: &Opts) -> Result<()> {
 pub fn new_db(
     filename: &str,
     compress: i8,
-    page_cache_mebibytes: i32,
+    page_cache_mebibytes: u32,
 ) -> Result<rusqlite::Connection> {
     // formulate GenomicSQLite configuration JSON
     let dbopts = match object! {
@@ -245,7 +259,7 @@ fn insert_gfa1(filename: &str, txn: &Transaction, opts: &Opts) -> Result<usize> 
         "INSERT INTO gfa1_path_element(path_id,ordinal,segment_id,reverse,cigar_vs_previous) VALUES(?,?,?,?,?)"
     )?;
     let mut stmt_insert_walk =
-        txn.prepare("INSERT INTO temp.walk_hold(sample,hap_idx,refseq_name,refseq_begin,refseq_end,tags_json) VALUES(?,?,?,?,?,?)")?;
+        txn.prepare("INSERT INTO temp.walk_hold(sample,hap_idx,refseq_name,refseq_begin,refseq_end,min_segment_id,max_segment_id,tags_json) VALUES(?,?,?,?,?,?,?,?)")?;
     let mut stmt_insert_walk_steps =
         txn.prepare("INSERT INTO gfa1_walk_steps(walk_id,steps_jsarray) VALUES(?,?)")?;
 
@@ -601,33 +615,28 @@ fn insert_gfa1_walk(
     let tags_json = prepare_tags_json(line_num, tsv, 7)?;
     let tags_json_text = tags_json.dump();
 
-    stmt_walk.execute(params![
-        sample,
-        hap_idx as i64,
-        refseq_name,
-        refseq_begin as i64,
-        refseq_end as i64,
-        if tags_json_text.trim() != "{}" {
-            Some(tags_json_text)
-        } else {
-            None
-        }
-    ])?;
-    let walk_id = txn.last_insert_rowid();
-
     // JSON-encode the walk steps
     let mut first_step = true;
+    let mut prev_segment_id = -1;
+    let mut prev_reverse = false;
+    let mut min_segment_id = i64::MAX;
+    let mut max_segment_id = i64::MIN;
     let mut steps_json_text = String::from("[");
-    let mut prev_segment = None;
     for pre_step in tsv[6].split('>') {
-        let mut rev = false;
+        if first_step && pre_step.is_empty() {
+            continue;
+        }
+        let mut reverse = false;
         for segment_name in pre_step.split('<') {
             if first_step {
+                if segment_name.is_empty() {
+                    continue;
+                }
                 steps_json_text.push_str("{\"");
-                first_step = false
             } else {
                 steps_json_text.push_str(",{\"");
             }
+
             let maybe_segment_id = if always_names {
                 None
             } else {
@@ -642,38 +651,65 @@ fn insert_gfa1_walk(
                     }
                 },
             };
+
             let segment_id_text = format!("s\":{}", segment_id);
             // delta-encode the segment id, if that's shorter than writing it out
-            let maybe_delta_text = match prev_segment {
-                Some(pid) => {
-                    let (sign, delta) = if segment_id >= pid {
-                        ("+", segment_id - pid)
-                    } else {
-                        ("-", pid - segment_id)
-                    };
-                    let delta_text = format!("{}\":{}", sign, delta);
-                    if delta_text.len() < segment_id_text.len() {
-                        Some(delta_text)
-                    } else {
-                        None
-                    }
+            let maybe_delta_text = if first_step {
+                None
+            } else {
+                let (sign, delta) = if segment_id >= prev_segment_id {
+                    ("+", segment_id - prev_segment_id)
+                } else {
+                    ("-", prev_segment_id - segment_id)
+                };
+                let delta_text = format!("{}\":{}", sign, delta);
+                if delta_text.len() < segment_id_text.len() {
+                    Some(delta_text)
+                } else {
+                    None
                 }
-                None => None,
             };
             steps_json_text.push_str(&maybe_delta_text.unwrap_or(segment_id_text));
-            prev_segment = Some(segment_id);
-            // after splitting on '>', the first element of pre_step is forward and remaining
-            // elements are reverse
-            if rev {
-                steps_json_text.push_str(",\"r\":1}");
+
+            // write orientation if it's flipping wrt previous
+            if first_step || prev_reverse != reverse {
+                steps_json_text.push_str(if reverse { ",\"r\":1}" } else { ",\"r\":0}" })
             } else {
-                steps_json_text.push_str("}");
-                rev = true;
+                steps_json_text.push_str("}")
             }
+
+            prev_segment_id = segment_id;
+            min_segment_id = cmp::min(min_segment_id, segment_id);
+            max_segment_id = cmp::max(max_segment_id, segment_id);
+            prev_reverse = reverse;
+            // after the nested splits on '>' then '<', the first element of pre_step is forward
+            // and remaining elements are reverse
+            reverse = true;
+            first_step = false;
         }
-        steps_json_text.push_str("}");
     }
     steps_json_text.push_str("]");
+
+    if first_step {
+        invalid_gfa!("(Ln {}) empty walk", line_num)
+    }
+
+    stmt_walk.execute(params![
+        sample,
+        hap_idx as i64,
+        refseq_name,
+        refseq_begin as i64,
+        refseq_end as i64,
+        min_segment_id,
+        max_segment_id,
+        if tags_json_text.trim() != "{}" {
+            Some(tags_json_text)
+        } else {
+            None
+        }
+    ])?;
+    let walk_id = txn.last_insert_rowid();
+
     stmt_steps.execute(params![walk_id, steps_json_text])?;
     Ok(())
 }

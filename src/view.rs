@@ -353,7 +353,7 @@ pub fn write_walks(
         iter_walk(&mut iter_walk_query, walk_id, |segment_id, reverse| {
             writer.write_fmt(format_args!(
                 "{}{}",
-                if reverse { ">" } else { "<" },
+                if reverse { "<" } else { ">" },
                 segment_id
             ))?;
             Ok(true)
@@ -509,16 +509,14 @@ impl<'a> SegmentRangeGuesser<'_> {
 // First, a query preparation amortized over multiple Walks if needed.
 pub fn prepare_iter_walk<'a>(db: &'a rusqlite::Connection) -> Result<rusqlite::Statement<'a>> {
     match db.prepare(
-        "WITH steps AS
-            (SELECT json_each.value AS step
-             FROM gfa1_walk_steps, json_each(gfa1_walk_steps.steps_jsarray)
-             WHERE walk_id = ?)
-         SELECT
-            json_extract(step,'$.s'),
-            json_extract(step,'$.+'),
-            json_extract(step,'$.-'),
-            coalesce(json_extract(step,'$.<'),0) AS reverse
-         FROM steps",
+        "SELECT
+            json_extract(json_each.value,'$.s'),
+            json_extract(json_each.value,'$.+'),
+            json_extract(json_each.value,'$.-'),
+            json_extract(json_each.value,'$.r')
+         FROM
+            gfa1_walk_steps, json_each(gfa1_walk_steps.steps_jsarray)
+         WHERE walk_id = ?",
     ) {
         Ok(stmt) => Ok(stmt),
         Err(e) => Err(util::Error::DbError(e)),
@@ -531,19 +529,21 @@ pub fn iter_walk<F>(query: &mut rusqlite::Statement, walk_id: i64, mut f: F) -> 
 where
     F: FnMut(i64, bool) -> Result<bool>,
 {
-    let mut prev_segment = None;
+    let mut prev_segment = i64::MIN;
+    let mut prev_reverse = false;
     let mut cursor = query.query(params![walk_id])?;
     while let Some(row) = cursor.next()? {
         let maybe_segment_id: Option<i64> = row.get(0)?;
         let maybe_plus: Option<i64> = row.get(1)?;
         let maybe_minus: Option<i64> = row.get(2)?;
-        let reverse: i64 = row.get(3)?;
+        let maybe_reverse: Option<i64> = row.get(3)?;
+
         let segment_id = if maybe_segment_id.is_some() {
             maybe_segment_id.unwrap()
-        } else if prev_segment.is_some() && maybe_plus.is_some() {
-            prev_segment.unwrap() + maybe_plus.unwrap()
-        } else if prev_segment.is_some() && maybe_minus.is_some() {
-            prev_segment.unwrap() - maybe_minus.unwrap()
+        } else if maybe_plus.is_some() {
+            prev_segment + maybe_plus.unwrap()
+        } else if maybe_minus.is_some() {
+            prev_segment - maybe_minus.unwrap()
         } else {
             return Err(util::Error::InvalidGfab {
                 message: String::from("Walk has invalid delta-encoding"),
@@ -551,10 +551,14 @@ where
                 rowid: walk_id,
             });
         };
-        prev_segment = Some(segment_id);
-        if !f(segment_id, reverse != 0)? {
+        let reverse = maybe_reverse.map_or(prev_reverse, |r| r != 0);
+
+        if !f(segment_id, reverse)? {
             break;
         }
+
+        prev_segment = segment_id;
+        prev_reverse = reverse;
     }
     Ok(())
 }

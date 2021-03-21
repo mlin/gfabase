@@ -90,17 +90,25 @@ CREATE TABLE gfa1_walk(
     refseq_name TEXT NOT NULL COLLATE UINT,
     refseq_begin INTEGER NOT NULL,
     refseq_end INTEGER NOT NULL,
+    min_segment_id INTEGER NOT NULL
+        REFERENCES gfa1_segment_meta(segment_id),
+    max_segment_id INTEGER NOT NULL
+        REFERENCES gfa1_segment_meta(segment_id),
     tags_json TEXT
 );
 
 -- Walk steps. Because walks tend to dominate GFA file size, we don't atomize them into SQL-indexed
 -- rows like we do paths. Instead, we store each sequence of (segment_id,orientation) as a JSON
 -- array, in which each segment_id may be delta-encoded relative to its immediate predecessor:
---      [{"s":12345},{"+":1},...,{"s":23456,"<":1},{"-":1,"<":1},...]
--- ("<":1 indicates reverse orientation; forward orientation otherwise assumed)
+--
+--      [{"s":12345,"r":0},{"+":1},{"+":1},...,{"s":23456,"r":1},{"-":1,"r":0},...]
+--
+-- "+" means add the integer to preceding segment id; "-" means subtract.
+-- "r":0 indicates forward orientation and "r":1 reverse; if absent, then keep the preceding
+-- orientation.
 
 CREATE TABLE gfa1_walk_steps(
-    walk_id INTEGER NOT NULL
+    walk_id INTEGER PRIMARY KEY
         REFERENCES gfa1_walk(walk_id),
     steps_jsarray TEXT DEFAULT '[]'
 );
