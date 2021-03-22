@@ -332,10 +332,12 @@ pub fn write_walks(
     where_clause: &str,
     writer: &mut dyn io::Write,
 ) -> Result<()> {
+    let fwd = ">".as_bytes();
+    let rev = "<".as_bytes();
     let mut iter_walk_query = prepare_iter_walk(db)?;
     let walks_query_sql = format!(
         "SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, coalesce(tags_json, '{{}}')
-         FROM gfa1_walk {} ORDER BY sample, hap_idx, refseq_name, refseq_begin", where_clause);
+         FROM gfa1_walk {} ORDER BY sample, refseq_name, hap_idx, refseq_begin", where_clause);
     let mut walks_query = db.prepare(&walks_query_sql)?;
     let mut walks_cursor = walks_query.query(NO_PARAMS)?;
     while let Some(row) = walks_cursor.next()? {
@@ -351,11 +353,8 @@ pub fn write_walks(
             sample, hap_idx, refseq_name, refseq_begin, refseq_end
         ))?;
         iter_walk(&mut iter_walk_query, walk_id, |segment_id, reverse| {
-            writer.write_fmt(format_args!(
-                "{}{}",
-                if reverse { "<" } else { ">" },
-                segment_id
-            ))?;
+            writer.write(if reverse { rev } else { fwd })?;
+            writer.write(segment_id.to_string().as_bytes())?;
             Ok(true)
         })?;
         write_tags("gfa1_walk", walk_id, &tags_json, writer)?;
