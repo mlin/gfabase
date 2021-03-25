@@ -21,7 +21,7 @@ gfabase="cargo run --release -- --verbose"
 export TMPDIR=$(mktemp -d --tmpdir gfabase_vg_walks_test_XXXXXX)
 
 zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.zst | grep ^W | sort | sha256sum > "${TMPDIR}/original_walks" & pid=$!
-pv /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.zst | zstd -dc | time $gfabase load -o "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab" --compress 1
+zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.zst | time $gfabase load -o "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab" --compress 1
 is "$?" "0" "gfabase load"
 ls -lh "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab"
 
