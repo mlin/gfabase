@@ -57,9 +57,9 @@ pub struct Opts {
     #[clap(long)]
     pub guess_ranges: bool,
 
-    /// Given --connected, include Walks only for these samples, instead of all
+    /// Given --connected, include Walks only for these samples (comma-separated), instead of all
     #[clap(long, name = "SAMPLE")]
-    pub walk_samples: Vec<String>,
+    pub walk_samples: Option<String>,
 
     /// Omit Walks even if --connected
     #[clap(long)]
@@ -150,7 +150,9 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
 
         if !opts.no_walks {
             if opts.connected && connectivity::has_index(&txn, "input.")? {
-                compute_sub_walks(&txn, &opts.walk_samples, "input.")?;
+                let walk_samples: Option<Vec<&str>> =
+                    opts.walk_samples.as_ref().map(|s| s.split(",").collect());
+                compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "input.")?;
                 txn.execute_batch(
                     "INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
                         SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
@@ -214,7 +216,9 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
     let walks = if opts.connected && connectivity::has_index(&txn, "")? {
-        compute_sub_walks(&txn, &opts.walk_samples, "")?;
+        let walk_samples: Option<Vec<&str>> =
+            opts.walk_samples.as_ref().map(|s| s.split(",").collect());
+        compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "")?;
         true
     } else {
         if txn
@@ -580,7 +584,7 @@ fn expand_to_cutpoints(
 // ASSUMING that the latter was populated with --connected. Requires connectivity index
 fn compute_sub_walks(
     db: &rusqlite::Connection,
-    walk_samples: &Vec<String>,
+    walk_samples: Vec<&str>,
     schema: &str,
 ) -> Result<()> {
     db.execute_batch(&format!(

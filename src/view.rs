@@ -522,8 +522,8 @@ pub fn prepare_iter_walk<'a>(db: &'a rusqlite::Connection) -> Result<rusqlite::S
     }
 }
 
-// Then, the iteration function taking your callback, which returns false to stop the walk (without
-// indicating any error).
+// Then, the iteration function taking your callback, which may return false to stop the walk
+// (without indicating an error).
 pub fn iter_walk<F>(query: &mut rusqlite::Statement, walk_id: i64, mut f: F) -> Result<()>
 where
     F: FnMut(i64, bool) -> Result<bool>,
