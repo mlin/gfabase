@@ -17,7 +17,7 @@ pub struct Opts {
     #[clap(short, default_value = "-")]
     pub outfile: String,
 
-    /// desired segments/paths/ranges
+    /// desired segments/paths/ranges; omit to reproduce entire graph (with --walk-samples or --no-walks)
     #[clap(name = "SEGMENT")]
     pub segments: Vec<String>,
 
@@ -32,7 +32,7 @@ pub struct Opts {
     #[clap(long)]
     pub always_names: bool,
 
-    /// Expand from specified segments to complete (undirected) connected component(s), and include Walks
+    /// Expand from specified segments to complete (undirected) connected component(s), and include subgraph Walks
     #[clap(long)]
     pub connected: bool,
 
@@ -57,11 +57,11 @@ pub struct Opts {
     #[clap(long)]
     pub guess_ranges: bool,
 
-    /// Given --connected, include Walks only for these samples (comma-separated), instead of all
+    /// Include Walks only for these samples (comma-separated), instead of all (if taking subgraph, requires --connected)
     #[clap(long, name = "SAMPLE")]
     pub walk_samples: Option<String>,
 
-    /// Omit Walks even if --connected
+    /// Omit Walks
     #[clap(long)]
     pub no_walks: bool,
 
@@ -179,7 +179,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
                 .is_some()
             {
                 warn!(
-                    "excluding all Walks; including them requires --connected (and connectivity index)"
+                    "excluding all Walks; including subgraph Walks requires --connected (and connectivity index)"
                 )
             }
         }
