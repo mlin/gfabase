@@ -89,7 +89,13 @@ pub struct Opts {
 // pending release of fix for https://github.com/clap-rs/clap/issues/2279
 
 pub fn main(opts: &Opts) -> Result<()> {
-    if opts.segments.len() == 0 {
+    if opts.segments.is_empty()
+        && (opts.path
+            || opts.range
+            || opts.connected
+            || opts.cutpoints > 0
+            || opts.cutpoints_nt > 0)
+    {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
     if opts.view || opts.bandage || opts.guess_ranges || opts.outfile == "-" {
@@ -149,7 +155,9 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
         }
 
         if !opts.no_walks {
-            if opts.connected && connectivity::has_index(&txn, "input.")? {
+            if (opts.connected || opts.segments.is_empty())
+                && connectivity::has_index(&txn, "input.")?
+            {
                 let walk_samples: Option<Vec<&str>> =
                     opts.walk_samples.as_ref().map(|s| s.split(",").collect());
                 compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "input.")?;
@@ -215,25 +223,26 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
                 (SELECT DISTINCT path_id FROM gfa1_path_element
                  WHERE segment_id NOT IN temp.sub_segments)",
     )?;
-    let walks = if opts.connected && connectivity::has_index(&txn, "")? {
-        let walk_samples: Option<Vec<&str>> =
-            opts.walk_samples.as_ref().map(|s| s.split(",").collect());
-        compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "")?;
-        true
-    } else {
-        if txn
-            .query_row("SELECT walk_id FROM gfa1_walk LIMIT 1", NO_PARAMS, |_| {
-                Ok(())
-            })
-            .optional()?
-            .is_some()
-        {
-            warn!(
+    let walks =
+        if (opts.connected || opts.segments.is_empty()) && connectivity::has_index(&txn, "")? {
+            let walk_samples: Option<Vec<&str>> =
+                opts.walk_samples.as_ref().map(|s| s.split(",").collect());
+            compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "")?;
+            true
+        } else {
+            if txn
+                .query_row("SELECT walk_id FROM gfa1_walk LIMIT 1", NO_PARAMS, |_| {
+                    Ok(())
+                })
+                .optional()?
+                .is_some()
+            {
+                warn!(
                 "excluding all Walks; including them requires --connected (and connectivity index)"
             )
-        }
-        false
-    };
+            }
+            false
+        };
 
     let mut maybe_guesser = if opts.guess_ranges {
         Some(view::SegmentRangeGuesser::new(
@@ -373,7 +382,7 @@ fn compute_start_segments(
 ) -> Result<()> {
     let mut check_start_segments = false;
     db.execute_batch("CREATE TABLE temp.start_segments(segment_id INTEGER PRIMARY KEY)")?;
-    {
+    if !opts.segments.is_empty() {
         let mut insert_segment = if opts.range {
             // GRI query
             db.prepare(&format!(
@@ -437,6 +446,11 @@ fn compute_start_segments(
                 }
             }
         }
+    } else {
+        // no command-line segments...fill in all segment IDs (perhaps useful with --walk-samples)
+        db.execute_batch(
+            "INSERT INTO temp.start_segments(segment_id) SELECT segment_id FROM gfa1_segment_meta",
+        )?;
     }
 
     if check_start_segments {
@@ -458,7 +472,7 @@ fn compute_start_segments(
                 let missing_segment_id: i64 = row.get(0)?;
                 missing_examples.push(missing_segment_id.to_string())
             }
-            if missing_examples.len() > 0 {
+            if !missing_examples.is_empty() {
                 bad_command!(
                     "desired segment IDs aren't present in {} such as: {}",
                     &opts.gfab,
