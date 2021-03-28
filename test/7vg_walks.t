@@ -13,15 +13,15 @@ plan tests 8
 # aria2c -x 10 -j 10 -s 10 https://glennhickey.s3.amazonaws.com/share/GRCh38-f1-90-mc-mar13.gfa.gz
 # pv GRCh38-f1-90-mc-mar13.gfa.gz | bgzip -dc | gfabase load  -o GRCh38-f1-90-mc-mar13.gfab --verbose --memory-gbytes 16
 # gfabase sub GRCh38-f1-90-mc-mar13.gfab --view --connected --range GRCh38.chr21:1-1000000000 GRCh38.chr22:1-1000000000 | zstd -T0 -19 > GRCh38-f1-90-mc-mar13.chr21_chr22.zst
-aria2c -c -d /tmp -s 16 -x 16 --retry-wait 2 https://github.com/mlin/gfabase/releases/download/v0.5.0/GRCh38-f1-90-mc-mar13.chr21_chr22.zst
+aria2c -c -d /tmp -s 16 -x 16 --retry-wait 2 https://github.com/mlin/gfabase/releases/download/v0.6.0/GRCh38-f1-90-mc-mar13.chr21_chr22.gfa.zst
 is "$?" "0" "download gfa"
 
 gfabase="cargo run --release -- --verbose"
 
 export TMPDIR=$(mktemp -d --tmpdir gfabase_vg_walks_test_XXXXXX)
 
-zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.zst | grep ^W | sort > "${TMPDIR}/original_walks" & pid=$!
-zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.zst | time $gfabase load -o "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab" --compress 1
+zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.gfa.zst | grep ^W | sort > "${TMPDIR}/original_walks" & pid=$!
+zstd -dc /tmp/GRCh38-f1-90-mc-mar13.chr21_chr22.gfa.zst | time $gfabase load -o "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab" --compress 1
 is "$?" "0" "gfabase load"
 ls -lh "${TMPDIR}/GRCh38-f1-90-mc-mar13.chr21_chr22.gfab"
 
