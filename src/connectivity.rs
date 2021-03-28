@@ -48,8 +48,18 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
         }
     }
 
+    // index each Walk to the associated connected component. By definition, all segments in a Walk
+    // must be in one connected component, so it suffices just to look up one exemplar segment.
+    // Also, checking all of them would be costly.
     db.execute_batch(
-        "CREATE INDEX gfa1_connectivity_component ON gfa1_connectivity(component_id)",
+        "INSERT INTO gfa1_walk_connectivity(walk_id,component_id)
+         SELECT walk_id, component_id
+         FROM gfa1_walk INNER JOIN gfa1_connectivity ON gfa1_walk.min_segment_id = gfa1_connectivity.segment_id"
+    )?;
+
+    db.execute_batch(
+        "CREATE INDEX gfa1_connectivity_component ON gfa1_connectivity(component_id);
+         CREATE INDEX gfa1_walk_connectivity_component ON gfa1_walk_connectivity(component_id)",
     )?;
     Ok(())
 }
