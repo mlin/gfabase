@@ -4,7 +4,7 @@ FROM centos:7
 ARG target_cpu=ivybridge
 ARG zstd_version=1.4.8
 
-ENV RUSTFLAGS="-C target-cpu=${target_cpu} -C link-args=-Wl,-rpath,\$ORIGIN"
+ENV RUSTFLAGS="-C target-cpu=${target_cpu}"
 
 # yum
 RUN yum install -q -y gcc make unzip git wget perl-Test-Harness epel-release
