@@ -1,7 +1,7 @@
 use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, log_enabled, warn};
-use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension};
 use std::collections::{BinaryHeap, HashMap};
 use std::{cmp, io};
 
@@ -132,10 +132,9 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
 
         compute_subgraph(&txn, opts, "input.")?;
         load::create_tables(&txn)?;
-        sub_segment_count =
-            txn.query_row("SELECT count(1) FROM temp.sub_segments", NO_PARAMS, |row| {
-                row.get(0)
-            })?;
+        sub_segment_count = txn.query_row("SELECT count(1) FROM temp.sub_segments", [], |row| {
+            row.get(0)
+        })?;
 
         if sub_segment_count == 0 {
             warn!("no segments matched the command-line criteria")
@@ -172,7 +171,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
             } else if txn
                 .query_row(
                     "SELECT walk_id FROM input.gfa1_walk LIMIT 1",
-                    NO_PARAMS,
+                    [],
                     |_| Ok(()),
                 )
                 .optional()?
@@ -231,9 +230,7 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
             true
         } else {
             if txn
-                .query_row("SELECT walk_id FROM gfa1_walk LIMIT 1", NO_PARAMS, |_| {
-                    Ok(())
-                })
+                .query_row("SELECT walk_id FROM gfa1_walk LIMIT 1", [], |_| Ok(()))
                 .optional()?
                 .is_some()
             {
@@ -467,7 +464,7 @@ fn compute_start_segments(
             let mut missing_examples = Vec::new();
             let mut missing_examples_stmt =
                 db.prepare("SELECT segment_id FROM temp.unknown_segments LIMIT 10")?;
-            let mut missing_examples_cursor = missing_examples_stmt.query(NO_PARAMS)?;
+            let mut missing_examples_cursor = missing_examples_stmt.query([])?;
             while let Some(row) = missing_examples_cursor.next()? {
                 let missing_segment_id: i64 = row.get(0)?;
                 missing_examples.push(missing_segment_id.to_string())
@@ -531,7 +528,7 @@ fn expand_to_cutpoints(
     // cutpoint)
     {
         let mut start_segments = db.prepare("SELECT segment_id FROM temp.start_segments")?;
-        let mut start_segments_cursor = start_segments.query(NO_PARAMS)?;
+        let mut start_segments_cursor = start_segments.query([])?;
         while let Some(row) = start_segments_cursor.next()? {
             let segment_id: i64 = row.get(0)?;
             queue.push((radius - 1, segment_id, false));

@@ -1,6 +1,6 @@
 use clap::Clap;
 use log::{debug, info, warn};
-use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension};
 
 use crate::bad_command;
 use crate::load;
@@ -197,7 +197,7 @@ pub fn insert_paf(db: &rusqlite::Connection, opts: &Opts) -> Result<()> {
     // delete existing mappings if desired
     debug!("buffered {} of {} mappings", insert_count, all_count);
     if opts.replace {
-        let deleted = db.execute("DELETE FROM gfa1_segment_mapping", NO_PARAMS)?;
+        let deleted = db.execute("DELETE FROM gfa1_segment_mapping", [])?;
         if deleted > 0 {
             warn!("deleted {} existing mappings", deleted)
         }
