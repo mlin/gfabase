@@ -14,6 +14,9 @@ pub enum Error {
     #[error(transparent)]
     DbError(#[from] rusqlite::Error),
 
+    #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+
     #[error("[bad command] {0}")]
     BadCommand(String),
 
