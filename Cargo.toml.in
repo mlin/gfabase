@@ -27,6 +27,4 @@ which = "4"
 
 [dependencies.rusqlite]
 version = "0.25.3"
-features = []
-# TODO: track down performance regression & restore
-#features = ["bundled"]
+features = ["bundled"]

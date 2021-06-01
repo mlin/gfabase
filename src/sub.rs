@@ -311,7 +311,7 @@ fn sub_gfa_write(
     )?;
     view::write_links(
         db,
-        "WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",
+        "WHERE +from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",
         out,
     )?;
     view::write_paths(&db, "WHERE path_id IN temp.sub_paths", out)?;
