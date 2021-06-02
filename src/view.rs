@@ -3,7 +3,7 @@ use io::Write;
 use json::JsonValue;
 use log::{info, warn};
 use num_format::{Locale, ToFormattedString};
-use rusqlite::{params, OpenFlags, OptionalExtension, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension};
 use std::{env, fs, io, path, process};
 
 use crate::bad_command;
@@ -172,7 +172,7 @@ pub fn bandage_temp_filename() -> Result<String> {
 pub fn write_header(db: &rusqlite::Connection, writer: &mut dyn io::Write) -> Result<()> {
     let tags_json: String = db.query_row(
         "SELECT tags_json FROM gfa1_header WHERE _rowid_ = 1",
-        NO_PARAMS,
+        [],
         |row| row.get(0),
     )?;
     writer.write(b"H")?;
@@ -200,7 +200,7 @@ pub fn write_segments(
              FROM gfa1_segment_meta "
     }) + where_clause;
     let mut segments_query = db.prepare(&segments_query_sql)?;
-    let mut segments_cursor = segments_query.query(NO_PARAMS)?;
+    let mut segments_cursor = segments_query.query([])?;
     while let Some(segrow) = segments_cursor.next()? {
         let rowid: i64 = segrow.get(0)?;
         let name: String = segrow.get(1)?;
@@ -252,7 +252,7 @@ pub fn write_links(
         where_clause
     );
     let mut links_query = db.prepare(&links_query_sql)?;
-    let mut links_cursor = links_query.query(NO_PARAMS)?;
+    let mut links_cursor = links_query.query([])?;
     while let Some(linkrow) = links_cursor.next()? {
         let link_id: i64 = linkrow.get(0)?;
         let from_segment: String = linkrow.get(1)?;
@@ -292,7 +292,7 @@ pub fn write_paths(
          FROM gfa1_path_element LEFT JOIN gfa1_segment_meta USING(segment_id)
          WHERE path_id=? ORDER BY path_id, ordinal",
     )?;
-    let mut paths_cursor = paths_query.query(NO_PARAMS)?;
+    let mut paths_cursor = paths_query.query([])?;
     while let Some(pathrow) = paths_cursor.next()? {
         let path_id: i64 = pathrow.get(0)?;
         let name: String = pathrow.get(1)?;
@@ -339,7 +339,7 @@ pub fn write_walks(
         "SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, coalesce(tags_json, '{{}}')
          FROM gfa1_walk {} ORDER BY sample, refseq_name, hap_idx, refseq_begin", where_clause);
     let mut walks_query = db.prepare(&walks_query_sql)?;
-    let mut walks_cursor = walks_query.query(NO_PARAMS)?;
+    let mut walks_cursor = walks_query.query([])?;
     while let Some(row) = walks_cursor.next()? {
         let walk_id: i64 = row.get(0)?;
         let sample: String = row.get(1)?;
@@ -418,7 +418,7 @@ impl<'a> SegmentRangeGuesser<'_> {
                 segment_id INTEGER PRIMARY KEY,
                 refseq_name TEXT NOT NULL,
                 refseq_begin INTEGER NOT NULL, refseq_end INTEGER NOT NULL)",
-            NO_PARAMS,
+            [],
         )?;
         let sql = format!(
             "WITH summary AS
@@ -441,7 +441,7 @@ impl<'a> SegmentRangeGuesser<'_> {
                 WHERE coverage_rank = 1",
             where_clause
         );
-        let n = db.execute(&sql, NO_PARAMS)?;
+        let n = db.execute(&sql, [])?;
         info!("guessed ranges for {} segments", n);
         // prepare queries on temp.segment_range_guess
         Ok(SegmentRangeGuesser {
@@ -483,7 +483,7 @@ impl<'a> SegmentRangeGuesser<'_> {
         {
             let mut writer = io::BufWriter::new(fs::File::create(&csv_filename)?);
             writer.write_fmt(format_args!("Name,Guessed range\n"))?;
-            let mut cursor = self.csv_query.query(NO_PARAMS)?;
+            let mut cursor = self.csv_query.query([])?;
             while let Some(row) = cursor.next()? {
                 let name: String = row.get(0)?;
                 let refseq_name: String = row.get(1)?;

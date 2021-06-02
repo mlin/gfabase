@@ -44,7 +44,7 @@ pub fn main() -> crate::util::Result<()> {
 
     println!("SQLite v{} with compile options:", rusqlite::version());
     let mut compile_options_stmt = db.prepare("PRAGMA compile_options")?;
-    let mut compile_options_cursor = compile_options_stmt.query(rusqlite::NO_PARAMS)?;
+    let mut compile_options_cursor = compile_options_stmt.query([])?;
     while let Some(optrow) = compile_options_cursor.next()? {
         let opt: String = optrow.get(0)?;
         println!("  {}", &opt);

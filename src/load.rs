@@ -3,7 +3,7 @@ use genomicsqlite::ConnectionMethods;
 use json::object;
 use log::{debug, info, log_enabled, warn};
 use num_format::{Locale, ToFormattedString};
-use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction, NO_PARAMS};
+use rusqlite::{params, OpenFlags, OptionalExtension, Statement, Transaction};
 use std::cmp;
 use std::collections::{HashMap, HashSet};
 
@@ -801,18 +801,16 @@ fn prepare_tags_json(
 pub fn summary(db: &rusqlite::Connection) -> Result<()> {
     debug!("tables & row counts:");
     let mut stmt_tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table'")?;
-    let mut tables = stmt_tables.query(NO_PARAMS)?;
+    let mut tables = stmt_tables.query([])?;
     while let Some(row) = tables.next()? {
         let table: String = row.get(0)?;
-        let ct: i64 = db.query_row(
-            &format!("SELECT count(1) FROM {}", table),
-            NO_PARAMS,
-            |ctr| ctr.get(0),
-        )?;
+        let ct: i64 = db.query_row(&format!("SELECT count(1) FROM {}", table), [], |ctr| {
+            ctr.get(0)
+        })?;
         debug!("\t{}\t{}", table, ct.to_formatted_string(&Locale::en));
     }
     if let Some(e) = db
-        .query_row("PRAGMA foreign_key_check", NO_PARAMS, |row| {
+        .query_row("PRAGMA foreign_key_check", [], |row| {
             Ok(util::Error::InvalidGfab {
                 message: String::from("foreign key integrity violation"),
                 table: row.get(0)?,
@@ -834,7 +832,7 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                         sum(is_cutpoint*sequence_length) AS cuts_bp
                  FROM gfa1_connectivity INNER JOIN gfa1_segment_meta USING(segment_id)
                  GROUP BY component_id)",
-            NO_PARAMS,
+            [],
             |row| {
                 let count: i64 = row.get(0)?;
                 if count > 0 {

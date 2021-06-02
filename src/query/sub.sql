@@ -16,9 +16,10 @@ INSERT INTO gfa1_segment_mapping(segment_id, refseq_name, refseq_begin, refseq_e
 
 INSERT INTO gfa1_link(from_segment, from_reverse, to_segment, to_reverse, tags_json)
     SELECT from_segment, from_reverse, to_segment, to_reverse, tags_json FROM input.gfa1_link
-    WHERE from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments
+    WHERE +from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments
+    -- FIXME: the unary plus hint +from_segment is a temporary workaround for a SQLite problem:
+    --        https://sqlite.org/forum/forumpost/b4fcb8a598?t=h
     ORDER BY from_segment, to_segment;
-
 
 -- Identify and copy the paths with no segments missing from temp.sub_segments
 CREATE TABLE temp.sub_paths(path_id INTEGER PRIMARY KEY);

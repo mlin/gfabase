@@ -5,7 +5,7 @@
 // of connected components. Disconnected segments are omitted from the table.
 
 use bloomfilter::Bloom;
-use rusqlite::{params, OptionalExtension, NO_PARAMS};
+use rusqlite::{params, OptionalExtension};
 use std::cmp;
 use std::collections::BTreeMap;
 
@@ -28,14 +28,14 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
     // use a bloom filter in front of visited_query
     let approx_segment_count: i64 = db.query_row(
         "SELECT coalesce(max(segment_id),100000) FROM gfa1_segment_meta",
-        NO_PARAMS,
+        [],
         |row| row.get(0),
     )?;
     let mut visited_bloom = Bloom::new_for_fp_rate(approx_segment_count as usize, 0.05);
 
     // traverse DFS forest to discover connected components
     let mut all_segments = db.prepare("SELECT segment_id FROM gfa1_segment_meta")?;
-    let mut all_segments_cursor = all_segments.query(NO_PARAMS)?;
+    let mut all_segments_cursor = all_segments.query([])?;
     while let Some(segrow) = all_segments_cursor.next()? {
         let segment_id: i64 = segrow.get(0)?;
         if !(visited_bloom.check(&segment_id)
@@ -186,7 +186,7 @@ pub fn has_index(db: &rusqlite::Connection, schema: &str) -> Result<bool> {
                 "SELECT 1 FROM {}sqlite_master WHERE type='table' AND name='gfa1_connectivity'",
                 schema
             ),
-            NO_PARAMS,
+            [],
             |_| Ok(()),
         )
         .optional()?

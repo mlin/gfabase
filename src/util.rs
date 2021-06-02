@@ -14,6 +14,9 @@ pub enum Error {
     #[error(transparent)]
     DbError(#[from] rusqlite::Error),
 
+    #[error(transparent)]
+    Utf8Error(#[from] std::str::Utf8Error),
+
     #[error("[bad command] {0}")]
     BadCommand(String),
 
@@ -108,7 +111,7 @@ pub fn check_gfab_schema(db: &rusqlite::Connection, schema: &str) -> Result<semv
             "SELECT json_extract(tags_json, '$.PG:Z') FROM {}gfa1_header WHERE _rowid_ = 1",
             schema
         ),
-        rusqlite::NO_PARAMS,
+        [],
         |row| row.get(0),
     );
     if let Ok(pg) = pg_result {
