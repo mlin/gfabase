@@ -3,6 +3,7 @@ use io::Write;
 use json::JsonValue;
 use log::{info, warn};
 use num_format::{Locale, ToFormattedString};
+use rusqlite::types::ValueRef;
 use rusqlite::{params, OpenFlags, OptionalExtension};
 use std::{env, fs, io, path, process};
 
@@ -206,12 +207,22 @@ pub fn write_segments(
         let name: String = segrow.get(1)?;
         let maybe_sequence_length: Option<i64> = segrow.get(2)?;
         let tags_json: String = segrow.get(3)?;
-        let sequence: Option<String> = if with_sequences { segrow.get(4)? } else { None };
-        writer.write_fmt(format_args!(
-            "S\t{}\t{}",
-            name,
-            sequence.as_ref().map(String::as_str).unwrap_or("*")
-        ))?;
+        writer.write_fmt(format_args!("S\t{}\t", name))?;
+        if with_sequences {
+            match segrow.get_ref(4)? {
+                ValueRef::Text(sequence) => writer.write(sequence)?,
+                ValueRef::Null => writer.write(b"*")?,
+                _ => {
+                    return Err(util::Error::InvalidGfab {
+                        message: String::from("segment row has invalid sequence value type"),
+                        table: String::from("gfa1_segment_sequence"),
+                        rowid: rowid,
+                    })
+                }
+            };
+        } else {
+            writer.write(b"*")?;
+        }
         if let Some(sequence_length) = maybe_sequence_length {
             writer.write_fmt(format_args!("\tLN:i:{}", sequence_length))?;
         }
