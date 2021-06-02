@@ -312,6 +312,8 @@ fn sub_gfa_write(
     view::write_links(
         db,
         "WHERE +from_segment IN temp.sub_segments AND to_segment IN temp.sub_segments",
+        // FIXME: the unary plus hint +from_segment is a temporary workaround for a SQLite problem:
+        //        https://sqlite.org/forum/forumpost/b4fcb8a598?t=h
         out,
     )?;
     view::write_paths(&db, "WHERE path_id IN temp.sub_paths", out)?;
