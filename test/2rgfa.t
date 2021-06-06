@@ -81,7 +81,7 @@ gfabase sub "${TMPDIR}/GRCh38-20-0.10b.chr22_chrY.gfab" \
     --range --biconnected 2 --view chr22:11,000,000-12,000,000 \
     > "${TMPDIR}/megabase2.gfa"
 is $(cat "${TMPDIR}/megabase2.gfa" | grep "^S" | cut -f3 | LC_ALL=C sort | sha256sum | cut -f1 -d ' ') \
-   "40d135762d8991bca571e28615ad75c4d7bc76450922b9ceabfe4eeb2386240c" "sub --biconnected 2 segments"
-is $(cat "${TMPDIR}/megabase2.gfa" | grep "^L" | wc -l | tr -d ' ') "57" "sub --biconnected 2 links"
+   "17d49156acd0ccad3452fb938b932234132a5d31f25ce92e7c655bff0628c654" "sub --biconnected 2 segments"
+is $(cat "${TMPDIR}/megabase2.gfa" | grep "^L" | wc -l | tr -d ' ') "56" "sub --biconnected 2 links"
 
 rm -rf "$TMPDIR"

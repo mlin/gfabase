@@ -80,7 +80,9 @@ pub fn index(db: &rusqlite::Connection) -> Result<()> {
 }
 
 // DFS traversal from given start segment; populate gfa1_connectivity with the discovered connected
-// component, also marking is_cutpoint therein. https://cp-algorithms.com/graph/cutpoints.html
+// component, also marking its cutpoints and biconnected components. refs:
+//     https://cp-algorithms.com/graph/cutpoints.html
+//     https://www.cs.cmu.edu/~avrim/451f12/lectures/biconnected.pdf
 
 // cutpoint algo state for each discovered segment
 struct DfsSegmentState {
@@ -109,18 +111,17 @@ fn component_dfs(
 ) -> Result<()> {
     let mut timestamp: u64 = 0;
     let mut state: BTreeMap<i64, DfsSegmentState> = BTreeMap::new();
-    let mut bicon_stack: Vec<(i64, i64)> = Vec::new();
     let mut start_returns: u64 = 0;
 
     let mut stack = vec![DfsStackFrame::Arrive {
         segment: start_segment_id,
         parent: i64::MIN, // undefined for start segment
     }];
+    let mut bicon_stack: Vec<(i64, i64)> = vec![(i64::MIN, start_segment_id)];
     while let Some(frame) = stack.pop() {
         match frame {
             DfsStackFrame::Arrive { segment, parent } => {
                 assert_ne!(segment, i64::MIN);
-                bicon_stack.push((parent, segment));
                 if let Some(t_in) = state.get(&segment).map(|segment_state| segment_state.t_in) {
                     // already visited this segment; reduce parent t_low to the first such visit
                     assert!(timestamp > 1);
@@ -138,6 +139,7 @@ fn component_dfs(
                             bicon_components: BTreeSet::new(),
                         },
                     );
+                    bicon_stack.push((parent, segment));
                     // schedule return to parent after...
                     if segment != start_segment_id {
                         stack.push(DfsStackFrame::Return {
