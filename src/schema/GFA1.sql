@@ -3,7 +3,8 @@ CREATE TABLE gfa1_segment_meta(
     segment_id INTEGER NOT NULL PRIMARY KEY,
     name TEXT COLLATE UINT,   -- if distinct from ID, otherwise NULL
     sequence_length INTEGER,  -- if no sequence (*): length taken from LN:i tag if present, otherwise NULL
-    tags_json TEXT
+    tags_json TEXT,
+    CHECK(-0x7FFFFFFFFFFFFFFF <= segment_id AND segment_id < 0x7FFFFFFFFFFFFFFF)
 );
 
 -- Segment sequences (stored separately & with two-bit encoding)
