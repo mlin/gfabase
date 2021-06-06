@@ -3,6 +3,11 @@
 // annotating each segment with its connected component, identified by the smallest connected
 // segment_id, and whether it's a "cutpoint" whose individual deletion would increase the number
 // of connected components. Disconnected segments are omitted from the table.
+//
+// In the same pass, also discover biconnected components, sets of >=3 segments which remain
+// connected following deletion of any one. Store a relation table annotating which biconnected
+// component(s) each segment is part of (possibly multiple for cutpoint segments). The ID of a
+// biconnected component is the tuple of its min and max constituent segment IDs.
 
 use bloomfilter::Bloom;
 use rusqlite::{params, OptionalExtension};
@@ -214,7 +219,7 @@ fn pop_bicon_component(
             segments.insert(s0);
         }
         segments.insert(s1);
-        if s0 == entry.0 && s1 == entry.1 {
+        if (s0, s1) == entry {
             break;
         }
     }

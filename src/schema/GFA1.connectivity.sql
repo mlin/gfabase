@@ -19,9 +19,8 @@ CREATE TABLE gfa1_walk_connectivity(
 
 -- Biconnected components: sets of >=3 segments that remain undirectedly connected if any one is
 -- deleted. Cutpoint segments may be part of zero, one, or multiple biconnected components.
--- Non-cutpoint segments may in zero or one. The ID of a biconnected component is the tuple of its
--- min and max segment ID (as any one segment ID could refer to a cutpoint that's part of multiple
--- bicomponents).
+-- Non-cutpoint segments, zero or one. The ID of a biconnected component is the tuple of its min
+-- and max segment ID.
 CREATE TABLE gfa1_biconnectivity(
     segment_id INTEGER REFERENCES gfa1_segment_meta(segment_id),
     bicomponent_min INTEGER NOT NULL,

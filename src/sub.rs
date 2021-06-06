@@ -2,8 +2,8 @@ use clap::Clap;
 use genomicsqlite::ConnectionMethods;
 use log::{debug, info, log_enabled, warn};
 use rusqlite::{params, OpenFlags, OptionalExtension};
-use std::collections::{BinaryHeap, HashMap};
-use std::{cmp, io};
+use std::collections::BinaryHeap;
+use std::io;
 
 use crate::util::Result;
 use crate::{bad_command, connectivity, load, util, view};
@@ -32,18 +32,13 @@ pub struct Opts {
     #[clap(long)]
     pub always_names: bool,
 
-    /// Expand from specified segments to complete (undirected) connected component(s), and include subgraph Walks
+    /// Expand from specified segments to complete connected component(s) (undirected), and include subgraph Walks
     #[clap(long)]
     pub connected: bool,
 
-    /// Expand from specified segments to subgraph connected by crossing fewer than R cutpoints
+    /// Expand from specified segments to adjacent biconnected component(s) (undirected)
     #[clap(long, name = "R", default_value = "0")]
-    pub cutpoints: u64,
-
-    /// Modifies --cutpoints to count only cutpoints with segment sequence at least L nucleotides
-    /// (implies --cutpoints >= 1)
-    #[clap(long, name = "L", default_value = "0")]
-    pub cutpoints_nt: u64,
+    pub biconnected: u64,
 
     /// Write .gfa instead of .gfab to outfile
     #[clap(long)]
@@ -90,11 +85,7 @@ pub struct Opts {
 
 pub fn main(opts: &Opts) -> Result<()> {
     if opts.segments.is_empty()
-        && (opts.path
-            || opts.range
-            || opts.connected
-            || opts.cutpoints > 0
-            || opts.cutpoints_nt > 0)
+        && (opts.path || opts.range || opts.connected || opts.biconnected > 0)
     {
         bad_command!("specify one or more desired subgraph segments on the command line");
     }
@@ -327,14 +318,9 @@ fn sub_gfa_write(
 fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<()> {
     compute_start_segments(db, opts, input_schema)?;
 
-    let mut cutpoints = opts.cutpoints;
-    if opts.cutpoints_nt > 0 {
-        cutpoints = cmp::max(1, cutpoints);
-    }
-
     if opts.connected {
-        if cutpoints > 0 {
-            warn!("--connected overriding --cutpoints");
+        if opts.biconnected > 0 {
+            warn!("--connected overriding --biconnected");
         }
         // sub_segments = connected components including start_segments
         if connectivity::has_index(db, input_schema)? {
@@ -359,11 +345,11 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
         }
     // optimization TODO: copying whole connected components, we can copy the relevant parts
     // of gfa1_connectivity instead of reanalyzing through connectivity::index()
-    } else if cutpoints > 0 {
+    } else if opts.biconnected > 0 {
         if !connectivity::has_index(db, input_schema)? {
-            panic!("input .gfab lacks connectivity index required for --cutpoints")
+            panic!("input .gfab lacks connectivity index required for --biconnected")
         }
-        expand_to_cutpoints(db, input_schema, cutpoints as i64, opts.cutpoints_nt as i64)?
+        expand_bicomponents(db, input_schema, opts.biconnected)?
     } else {
         // sub_segments = start_segments
         db.execute_batch("ALTER TABLE temp.start_segments RENAME TO sub_segments")?;
@@ -484,112 +470,75 @@ fn compute_start_segments(
     Ok(())
 }
 
-// Compute all segments connected to a set of start segments without traversing a cutpoint segment
-// (generally: traverse up to R-1 cutpoint segments of at least L bp each, defaults R=1 L=0).
-// "Traversing a cutpoint segment" means arriving on one side and departing the other; so when we
-// "stop" at a cutpoint segment, we still follow other edges touching the side at which we arrived.
-// Otherwise, treat non-cutpoint segments as unsided and all edges as undirected.
+// Expand start segments to the directly associated biconnected component(s), and (if radius>1)
+// adjacent biconnected component(s).
 //
 //  IN: segment IDs in temp.start_segments
 // OUT: segment IDs in temp.sub_segments
-fn expand_to_cutpoints(
-    db: &rusqlite::Connection,
-    input_schema: &str,
-    radius: i64,
-    cutpoint_length: i64,
-) -> Result<()> {
-    // query for segment's neighbors, also indicating which sides of segment & neighbor are linked
-    let neighbors_sql = format!(
-        "   SELECT (NOT from_reverse) AS rhs, to_segment AS neighbor, to_reverse AS neighbor_rhs
-            FROM {s}gfa1_link WHERE from_segment = ?1
-         UNION
-            SELECT to_reverse AS rhs, from_segment AS neighbor, (NOT from_reverse) AS neighbor_rhs
-            FROM {s}gfa1_link WHERE to_segment = ?1",
+fn expand_bicomponents(db: &rusqlite::Connection, input_schema: &str, radius: u64) -> Result<()> {
+    assert!(radius > 0);
+
+    // (remaining_radius, bicomponent_min, bicomponent_max)
+    let mut queue: BinaryHeap<(u64, i64, i64)> = BinaryHeap::new();
+    let mut start_bicomponents_query = db.prepare(&format!(
+        "SELECT DISTINCT bicomponent_min, bicomponent_max
+         FROM {s}gfa1_biconnectivity INNER JOIN temp.start_segments USING(segment_id)",
         s = input_schema
+    ))?;
+    let mut start_bicomponents_cursor = start_bicomponents_query.query([])?;
+    while let Some(row) = start_bicomponents_cursor.next()? {
+        let bicomponent_min: i64 = row.get(0)?;
+        let bicomponent_max: i64 = row.get(1)?;
+        queue.push((radius, bicomponent_min, bicomponent_max))
+    }
+
+    // query for bicomponents adjacent to the given one (<=> sharing a cutpoint)
+    db.execute_batch(
+        "CREATE TABLE temp.sub_bicomponents(
+            bicomponent_min INTEGER NOT NULL, bicomponent_max INTEGER NOT NULL,
+            PRIMARY KEY (bicomponent_min, bicomponent_max)
+         ) WITHOUT ROWID",
+    )?;
+    let neighbors_sql = format!(
+        "WITH cutpoints AS
+            (SELECT segment_id
+             FROM {s}gfa1_biconnectivity INNER JOIN {s}gfa1_connectivity USING(segment_id)
+             WHERE bicomponent_min = ?1 AND bicomponent_max = ?2 AND is_cutpoint)
+         SELECT DISTINCT bicomponent_min, bicomponent_max
+         FROM {s}gfa1_biconnectivity INNER JOIN cutpoints USING(segment_id)
+         WHERE (bicomponent_min, bicomponent_max) NOT IN temp.sub_bicomponents",
+        s = input_schema,
     );
     let mut neighbors_query = db.prepare(&neighbors_sql)?;
 
-    let mut is_cutpoint_query = db.prepare(&format!(
-        "SELECT is_cutpoint FROM {}gfa1_connectivity WHERE segment_id = ?",
-        input_schema
-    ))?;
-    let mut sequence_length_query = db.prepare(&format!(
-        "SELECT sequence_length FROM {}gfa1_segment_meta WHERE segment_id = ?",
-        input_schema
-    ))?;
-    let mut is_cutpoint_memo: HashMap<i64, bool> = HashMap::new();
-
-    // max-heap on (remaining_radius, segment_id, rhs)
-    // Scheduled visit to (left/right-hand side of) segment, with remaining_radius "energy" left.
-    // Prioritizing visits energy-first promotes locality
-    let mut queue: BinaryHeap<(i64, i64, bool)> = BinaryHeap::new();
-    // (segment, cutpoint_rhs) -> max remaining_radius of previous visits
-    let mut visited: HashMap<(i64, bool), i64> = HashMap::new();
-
-    // seed the queue with starting segments (both sides, in case a starting segment is itself a
-    // cutpoint)
-    {
-        let mut start_segments = db.prepare("SELECT segment_id FROM temp.start_segments")?;
-        let mut start_segments_cursor = start_segments.query([])?;
-        while let Some(row) = start_segments_cursor.next()? {
-            let segment_id: i64 = row.get(0)?;
-            queue.push((radius - 1, segment_id, false));
-            queue.push((radius - 1, segment_id, true));
-        }
-    }
-
-    // take from queue until empty
-    while let Some((remaining_radius, segment, rhs)) = queue.pop() {
-        let is_cutpoint = if let Some(&ans) = is_cutpoint_memo.get(&segment) {
-            ans
-        } else {
-            let mut ans = is_cutpoint_query
-                .query_row(params![segment], |row| row.get(0))
-                .optional()?
-                .unwrap_or(0 as i64)
-                != 0;
-            if ans && cutpoint_length != 0 {
-                let len: i64 =
-                    sequence_length_query.query_row(params![segment], |row| row.get(0))?;
-                ans = len >= cutpoint_length;
-            }
-            is_cutpoint_memo.insert(segment, ans);
-            ans
-        };
-
-        // skip if we've already visited segment with at least remaining_radius
-        if visited
-            .get(&(segment, is_cutpoint && rhs))
-            .map_or(false, |&visited_radius| visited_radius >= remaining_radius)
+    // process queue to compute desired bicomponents
+    let mut insert_bicomponent =
+        db.prepare("INSERT OR IGNORE INTO temp.sub_bicomponents VALUES(?,?)")?;
+    while let Some((remaining_radius, bicomponent_min, bicomponent_max)) = queue.pop() {
+        // record visit; if we already visited this bicomponent, then it must have been with
+        // greater remaining_radius, as the graph of bicomponents is acyclic by definition.
+        if insert_bicomponent.execute(params![bicomponent_min, bicomponent_max])? > 0
+            && remaining_radius > 1
         {
-            continue;
-        }
-        // record this visit
-        visited.insert((segment, is_cutpoint && rhs), remaining_radius);
-
-        // schedule visits to segment's neighbors:
-        //   those linked to same side of segment, always
-        //   those linked to opposite side -- unless we're at a cutpoint & out of energy
-        let mut neighbors_cursor = neighbors_query.query(params![segment])?;
-        while let Some(row) = neighbors_cursor.next()? {
-            let link_rhs: bool = row.get(0)?;
-            let neighbor: i64 = row.get(1)?;
-            let neighbor_rhs: bool = row.get(2)?;
-            if rhs == link_rhs || !is_cutpoint || remaining_radius > 0 {
-                let cost = if is_cutpoint && rhs != link_rhs { 1 } else { 0 };
-                queue.push((remaining_radius - cost, neighbor, neighbor_rhs))
+            // enqueue neighbors
+            let mut neighbors_cursor =
+                neighbors_query.query(params![bicomponent_min, bicomponent_max])?;
+            while let Some(row) = neighbors_cursor.next()? {
+                let neighbor_min: i64 = row.get(0)?;
+                let neighbor_max: i64 = row.get(1)?;
+                queue.push((remaining_radius - 1, neighbor_min, neighbor_max))
             }
         }
     }
 
-    // fill temp.sub_segments with all visited segment IDs
-    db.execute_batch("CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY)")?;
-    let mut insert_sub =
-        db.prepare("INSERT OR IGNORE INTO temp.sub_segments(segment_id) VALUES(?)")?;
-    for (segment, _) in visited.keys() {
-        insert_sub.execute(params![segment])?;
-    }
-
+    // output all segments in those bicomponents
+    db.execute_batch(&format!(
+        "CREATE TABLE temp.sub_segments(segment_id INTEGER PRIMARY KEY);
+         INSERT OR IGNORE INTO temp.sub_segments
+            SELECT segment_id FROM {s}gfa1_biconnectivity INNER JOIN temp.sub_bicomponents
+            USING(bicomponent_min,bicomponent_max)",
+        s = input_schema
+    ))?;
     Ok(())
 }
 
