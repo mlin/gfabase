@@ -77,6 +77,10 @@ pub struct Opts {
     #[clap(long, default_value = "6")]
     pub compress: i8,
 
+    /// Memory budget (GiB)
+    #[clap(long, default_value = "1")]
+    pub memory_gbytes: u32,
+
     /// log extra progress reports
     #[clap(short, long)]
     pub verbose: bool,
@@ -116,11 +120,15 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
     util::url_or_extant_file(&opts.gfab)?;
 
     // create output database
-    let mut db = load::new_db(&opts.outfile, opts.compress, 1024)?;
+    let mut db = load::new_db(&opts.outfile, opts.compress, opts.memory_gbytes * 200)?;
 
     // attach input database
     let mut dbopts_in = json::object::Object::new();
     dbopts_in.insert("immutable", json::JsonValue::from(true));
+    dbopts_in.insert(
+        "page_cache_MiB",
+        json::JsonValue::from(opts.memory_gbytes * 600),
+    );
     let attach_sql = db.genomicsqlite_attach_sql(&opts.gfab, "input", &dbopts_in)?;
     db.execute_batch(&attach_sql)?;
     let gfab_version = util::check_gfab_schema(&db, "input.")?;
@@ -139,7 +147,7 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
         if sub_segment_count == 0 {
             warn!("no segments matched the command-line criteria")
         } else {
-            info!(
+            debug!(
                 "copying {} segments (and links & paths touching only those segments)",
                 sub_segment_count
             );
@@ -160,6 +168,13 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
                 let walk_samples: Option<Vec<&str>> =
                     opts.walk_samples.as_ref().map(|s| s.split(",").collect());
                 compute_sub_walks(&txn, walk_samples.unwrap_or(vec![]), "input.")?;
+                if opts.verbose {
+                    let sub_walks_count: i64 =
+                        txn.query_row("SELECT count(*) FROM temp.sub_walks", [], |row| row.get(0))?;
+                    if sub_walks_count > 0 {
+                        debug!("copying {} walks", sub_walks_count)
+                    }
+                }
                 txn.execute_batch(
                     "INSERT INTO gfa1_walk(walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json)
                         SELECT walk_id, sample, hap_idx, refseq_name, refseq_begin, refseq_end, tags_json
@@ -203,6 +218,10 @@ fn sub_gfab(opts: &Opts) -> Result<()> {
 fn sub_gfa(opts: &Opts) -> Result<()> {
     let mut dbopts = json::object::Object::new();
     dbopts.insert("immutable", json::JsonValue::from(true));
+    dbopts.insert(
+        "page_cache_MiB",
+        json::JsonValue::from(opts.memory_gbytes * 800),
+    );
 
     // open db
     let mut db = genomicsqlite::open(
@@ -213,6 +232,16 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
 
     let txn = db.transaction()?;
     compute_subgraph(&txn, opts, "")?;
+    if opts.verbose {
+        let sub_segment_count: i64 =
+            txn.query_row("SELECT count(*) FROM temp.sub_segments", [], |row| {
+                row.get(0)
+            })?;
+        debug!(
+            "copying {} segments (and links & paths touching only those segments)",
+            sub_segment_count
+        );
+    }
     txn.execute_batch(
         // desired paths are those without a segment not in temp.sub_segments
         "CREATE TABLE temp.sub_paths(path_id INTEGER PRIMARY KEY);
@@ -240,6 +269,14 @@ fn sub_gfa(opts: &Opts) -> Result<()> {
             }
             false
         };
+
+    if walks && opts.verbose {
+        let sub_walks_count: i64 =
+            txn.query_row("SELECT count(*) FROM temp.sub_walks", [], |row| row.get(0))?;
+        if sub_walks_count > 0 {
+            debug!("copying {} walks", sub_walks_count)
+        }
+    }
 
     let mut maybe_guesser = if opts.guess_ranges {
         Some(view::SegmentRangeGuesser::new(
@@ -327,6 +364,14 @@ fn sub_gfa_write(
 fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) -> Result<()> {
     compute_start_segments(db, opts, input_schema)?;
 
+    if opts.verbose {
+        db.query_row("SELECT count(*) FROM temp.start_segments", [], |row| {
+            let n: i64 = row.get(0)?;
+            debug!("resolved {} segments from command line", n);
+            Ok(())
+        })?
+    }
+
     let mut cutpoints = opts.cutpoints;
     if opts.cutpoints_nt > 0 {
         cutpoints = cmp::max(1, cutpoints);
@@ -357,8 +402,8 @@ fn compute_subgraph(db: &rusqlite::Connection, opts: &Opts, input_schema: &str) 
                 + "\nALTER TABLE temp.connected_segments RENAME TO sub_segments";
             db.execute_batch(&connected_sql)?;
         }
-    // optimization TODO: copying whole connected components, we can copy the relevant parts
-    // of gfa1_connectivity instead of reanalyzing through connectivity::index()
+        // optimization TODO: copying whole connected components, we can copy the relevant parts
+        // of gfa1_connectivity instead of reanalyzing through connectivity::index()
     } else if cutpoints > 0 {
         if !connectivity::has_index(db, input_schema)? {
             panic!("input .gfab lacks connectivity index required for --cutpoints")
