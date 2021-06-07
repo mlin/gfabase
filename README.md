@@ -48,9 +48,9 @@ Furthermore, `gfabase add-mappings my.gfab mappings.paf` adds mappings of segmen
 
 Adding `--connected` to `gfabase sub` expands the subgraph to include the complete connected component(s) associated with the specified segments.
 
-Often we want to see the segments' "neighborhood" but not necessarily the whole connected component. Instead of `--connected`, set `--biconnected 1` to extract the associated *bi*connected component(s), which naturally stops the expansion at "cutpoints" with no possible detours to walk from one end of the chromosome to the other. Setting `--biconnected 2` or higher also includes biconnected components *adjacent* to those directly including the query segments.
+That may be overkill, if we're only interested in the segments' immediate neighborhood. In that case, set `--biconnected 1` instead to extract the associated *bi*connected component(s), which naturally stops the expansion at "cutpoints" (which any end-to-end walk of the chromosome must traverse). Setting `--biconnected 2` or higher also includes biconnected components *adjacent* to those including the query segments.
 
-<sup>The segment graph is treated as undirected for the `--connected` and `-biconnected` expansions. Therefore the extracted subgraphs include, but are not limited to, directed "superbubbles."</sup>
+<sup>The `--connected` and `--biconnected` expansions treat the segment graph as undirected. Therefore the extracted subgraphs include, but are not limited to, directed "superbubbles."</sup>
 
 ### Web access
 
