@@ -126,7 +126,10 @@ fn component_dfs(
                     // already visited this segment; reduce parent t_low to the first such visit
                     assert!(timestamp > 1);
                     let ref mut pt_state = state.get_mut(&parent).unwrap();
-                    pt_state.t_low = cmp::min(pt_state.t_low, t_in)
+                    if t_in < pt_state.t_in {
+                        pt_state.t_low = cmp::min(pt_state.t_low, t_in);
+                        bicon_stack.push((parent, segment))
+                    }
                 } else {
                     // first arrival at segment
                     timestamp += 1;
