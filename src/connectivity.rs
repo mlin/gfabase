@@ -123,15 +123,16 @@ fn component_dfs(
             DfsStackFrame::Arrive { segment, parent } => {
                 assert_ne!(segment, i64::MIN);
                 if let Some(t_in) = state.get(&segment).map(|segment_state| segment_state.t_in) {
-                    // already visited this segment; reduce parent t_low to the first such visit
-                    assert!(timestamp > 1);
+                    // previously visited segment
+                    assert!(timestamp > 1 && parent > i64::MIN);
                     let ref mut pt_state = state.get_mut(&parent).unwrap();
                     if t_in < pt_state.t_in {
+                        // cycle back to ancestor of parent; update parent t_low
                         pt_state.t_low = cmp::min(pt_state.t_low, t_in);
                         bicon_stack.push((parent, segment))
                     }
                 } else {
-                    // first arrival at segment
+                    // first visit to segment
                     timestamp += 1;
                     state.insert(
                         segment,
