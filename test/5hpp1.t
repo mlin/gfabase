@@ -36,14 +36,14 @@ is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select count(1) from gfa1_link')" "3
 is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select sum(sequence_length) from gfa1_segment_meta')" "3216020942" "gfab base metacount"
 is "$(gsql "${TMPDIR}/GRCh38-freeze1.gfab" 'select sum(twobit_length(sequence_twobit)) from gfa1_segment_sequence')" "3216020942" "gfab base count"
 
-$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/CR1.gfab" --cutpoints 2 215577
+$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/CR1.gfab" --biconnected 2 215577
 is "$(gsql "${TMPDIR}/CR1.gfab" 'select count(1) from gfa1_segment_meta')" "16" "CR1 --cutpoints 2 segment count"
 is "$(gsql "${TMPDIR}/CR1.gfab" 'select count(1) from gfa1_link')" "22" "CR1 --cutpoints 3 link count"
-$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/CR1.3.gfab" --cutpoints 4 215577
+$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/CR1.3.gfab" --biconnected 4 215577
 is "$(gsql "${TMPDIR}/CR1.3.gfab" 'select count(1) from gfa1_segment_meta')" "29" "CR1 --cutpoints 4 segment count"
 is "$(gsql "${TMPDIR}/CR1.3.gfab" 'select count(1) from gfa1_link')" "41" "CR1 --cutpoints 3 link count"
 
-$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/RHD.gfab" --cutpoints 2 --range chr1:25,272,509-25,330,445
+$gfabase sub "${TMPDIR}/GRCh38-freeze1.gfab" -o "${TMPDIR}/RHD.gfab" --biconnected 2 --range chr1:25,272,509-25,330,445
 is "$(gsql "${TMPDIR}/RHD.gfab" 'select count(1) from gfa1_segment_meta')" "17" "RHD --cutpoints 2 segment count"
 is "$(gsql "${TMPDIR}/RHD.gfab" 'select count(1) from gfa1_link')" "25" "RHD --cutpoints 3 link count"
 

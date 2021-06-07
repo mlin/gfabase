@@ -857,6 +857,30 @@ pub fn summary(db: &rusqlite::Connection) -> Result<()> {
                 Ok(())
             },
         )?;
+        db.query_row(
+            "SELECT count(*), max(size) FROM
+                (SELECT
+                    bicomponent_min, bicomponent_max,
+                    count(segment_id) AS size
+                 FROM gfa1_biconnectivity INNER JOIN gfa1_segment_meta USING(segment_id)
+                 GROUP BY bicomponent_min, bicomponent_max)",
+            [],
+            |row| {
+                let count: i64 = row.get(0)?;
+                if count > 0 {
+                    let maxsize: i64 = row.get(1)?;
+                    debug!(
+                        "\t{} biconnected components (of at least 3 segments)",
+                        count.to_formatted_string(&Locale::en)
+                    );
+                    debug!(
+                        "\t{} segments in largest biconnected component",
+                        maxsize.to_formatted_string(&Locale::en)
+                    )
+                }
+                Ok(())
+            },
+        )?;
     }
     Ok(())
 }
